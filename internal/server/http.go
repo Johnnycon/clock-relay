@@ -636,7 +636,6 @@ func scheduleDetails(schedule config.ScheduleConfig) template.HTML {
 			parts = append(parts, template.HTML(template.HTMLEscapeString(schedule.Cron)))
 		}
 	}
-	parts = append(parts, template.HTML(template.HTMLEscapeString(concurrencyLabel(schedule))))
 	var result template.HTML
 	for i, p := range parts {
 		if i > 0 {
@@ -896,7 +895,7 @@ const uiHTML = `{{define "index"}}<!doctype html>
     {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
     {{if .Notice}}<div class="alert notice">{{.Notice}}</div>{{end}}
 
-	    <section data-live-section="jobs">
+	    <section class="table-section jobs-section" data-live-section="jobs">
       <div class="section-head">
         <h2>Jobs</h2>
         <a class="button primary" href="/schedules/new">New job</a>
@@ -952,7 +951,7 @@ const uiHTML = `{{define "index"}}<!doctype html>
       {{end}}
     </section>
 
-	    <section data-live-section="runs" data-job-filter="{{.JobFilter}}">
+	    <section class="table-section runs-section" data-live-section="runs" data-job-filter="{{.JobFilter}}">
       <div class="section-head">
         <h2>Run Log</h2>
         <div class="section-actions">
@@ -2193,6 +2192,16 @@ const uiHTML = `{{define "index"}}<!doctype html>
     border-radius: 8px;
     overflow: hidden;
   }
+  .table-section {
+    overflow: visible;
+    position: relative;
+  }
+  .jobs-section {
+    z-index: 20;
+  }
+  .runs-section {
+    z-index: 10;
+  }
   .section-head {
     display: flex;
     align-items: center;
@@ -2314,7 +2323,7 @@ const uiHTML = `{{define "index"}}<!doctype html>
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,.1);
     min-width: 120px;
-    z-index: 10;
+    z-index: 50;
     padding: 4px 0;
   }
   .overflow-menu.open .overflow-items {
