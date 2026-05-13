@@ -174,6 +174,10 @@ Faktory jobs can be created and edited in the UI. Args are entered as a JSON arr
 Example Faktory job types use lower `snake_case` names such as `smoke_job`, `say_hello`, and `meal_reminder`.
 
 ```yaml
+faktory:
+  - name: default
+    url: tcp://faktory:7419
+
 schedules:
   - name: faktory-smoke
     schedule_type: cron
@@ -182,11 +186,20 @@ schedules:
     timeout: 10s
     target:
       type: faktory
-      url: tcp://faktory:7419
+      instance: default
       queue: default
       job_type: smoke_job
       args:
         - account_id: acct_123
+```
+
+`password_env` is optional and is commonly omitted in local development. If your Faktory server requires a password, keep the password out of YAML and point Clock Relay at the environment variable that contains it. Do not embed the password in the Faktory URL; Clock Relay reads Faktory passwords from `password_env`.
+
+```yaml
+faktory:
+  - name: staging
+    url: tcp://faktory:7419
+    password_env: FAKTORY_PASSWORD
 ```
 
 See `examples/faktory` for a Docker Compose smoke test with a real Faktory server and worker. The bundled Faktory config starts empty; the smoke test creates its temporary `faktory-smoke` schedule through the API before triggering it.
