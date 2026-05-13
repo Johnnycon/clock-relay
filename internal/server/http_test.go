@@ -406,13 +406,13 @@ func TestScheduleDetailsAvoidsInternalTypeLabels(t *testing.T) {
 		StartsAt:     "2026-05-08T18:39",
 		Timezone:     "America/Chicago",
 	}))
-	if !strings.Contains(got, "Starts") || !strings.Contains(got, "No overlap") {
-		t.Fatalf("expected starts and concurrency info, got %q", got)
+	if !strings.Contains(got, "Starts") {
+		t.Fatalf("expected starts info, got %q", got)
 	}
 	if !strings.Contains(got, `class="local-time"`) {
 		t.Fatalf("expected local-time span for StartsAt, got %q", got)
 	}
-	if strings.Contains(got, "rate") || strings.Contains(got, "forbid") {
+	if strings.Contains(got, "rate") || strings.Contains(got, "forbid") || strings.Contains(got, "overlap") {
 		t.Fatalf("expected operator-facing details, got %q", got)
 	}
 	if !strings.Contains(got, `class="timezone-context"`) || !strings.Contains(got, `data-source-tz="America/Chicago"`) {
