@@ -1,0 +1,8 @@
+/data/
+/clock-relay
+.env
+.env.*
+*.secret
+credentials.json
+.DS_Store
+Thumbs.db

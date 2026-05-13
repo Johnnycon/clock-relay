@@ -1,0 +1,8 @@
+server:
+  addr: ":9808"
+
+store:
+  type: bbolt
+  path: ./data/clock-relay.db
+
+schedules: []

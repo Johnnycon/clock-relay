@@ -1,0 +1,34 @@
+name: clock-relay-faktory
+
+services:
+  faktory:
+    image: contribsys/faktory:latest
+    command: /faktory -b :7419 -w :7420 -e development
+    ports:
+      - "7419:7419"
+      - "7420:7420"
+
+  clock-relay:
+    build:
+      context: ../..
+    depends_on:
+      - faktory
+    ports:
+      - "9808:9808"
+    volumes:
+      - ./clock-relay.yaml:/app/clock-relay.yaml:ro
+      - clock-relay-faktory-data:/app/data
+    command: ["clock-relay", "--config", "/app/clock-relay.yaml"]
+
+  runner:
+    build:
+      context: ./runner
+    depends_on:
+      - faktory
+    environment:
+      FAKTORY_URL: tcp://faktory:7419
+    ports:
+      - "8090:8090"
+
+volumes:
+  clock-relay-faktory-data:

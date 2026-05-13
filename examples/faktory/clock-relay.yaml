@@ -1,0 +1,12 @@
+server:
+  addr: ":9808"
+
+store:
+  type: bbolt
+  path: ./data/clock-relay-faktory.db
+
+faktory:
+  - name: default
+    url: tcp://faktory:7419
+
+schedules: []

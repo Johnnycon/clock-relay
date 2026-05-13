@@ -1,0 +1,11 @@
+services:
+  clock-relay:
+    build: .
+    ports:
+      - "9808:9808"
+    volumes:
+      - clock-relay-data:/app/data
+    command: ["clock-relay", "--config", "/app/clock-relay.yaml"]
+
+volumes:
+  clock-relay-data:

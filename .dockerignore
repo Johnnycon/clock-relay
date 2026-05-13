@@ -1,0 +1,8 @@
+.git
+.github
+.context
+.agents
+.claude
+data
+*.db
+*.log
