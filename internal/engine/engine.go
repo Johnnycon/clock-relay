@@ -1,4 +1,4 @@
-package relay
+package engine
 
 import (
 	"context"
@@ -10,16 +10,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
+	"github.com/johnnycon/clock-relay/internal/store"
+	"github.com/johnnycon/clock-relay/internal/target"
 	cron "github.com/netresearch/go-cron"
 )
 
 type Engine struct {
-	cfg             Config
-	store           Store
+	cfg             config.Config
+	store           store.Store
 	logger          *slog.Logger
 	cron            *cron.Cron
 	parser          cron.Parser
-	schedules       map[string]ScheduleConfig
+	schedules       map[string]config.ScheduleConfig
 	entryIDs        map[string]cron.EntryID
 	mu              sync.RWMutex
 	wg              sync.WaitGroup
@@ -30,12 +34,12 @@ type Engine struct {
 	runPruneStateMu sync.Mutex
 }
 
-func NewEngine(cfg Config, store Store, logger *slog.Logger) (*Engine, error) {
-	cfg.applyDefaults()
-	if err := validateRunRetention(cfg.RunRetention); err != nil {
+func NewEngine(cfg config.Config, store store.Store, logger *slog.Logger) (*Engine, error) {
+	cfg.ApplyDefaults()
+	if err := config.ValidateRunRetention(cfg.RunRetention); err != nil {
 		return nil, err
 	}
-	if err := validateRunLogging(cfg.RunLogging); err != nil {
+	if err := config.ValidateRunLogging(cfg.RunLogging); err != nil {
 		return nil, err
 	}
 	parser, err := cron.TryNewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor | cron.DowOrDom)
@@ -49,7 +53,7 @@ func NewEngine(cfg Config, store Store, logger *slog.Logger) (*Engine, error) {
 		logger:         logger,
 		cron:           c,
 		parser:         parser,
-		schedules:      map[string]ScheduleConfig{},
+		schedules:      map[string]config.ScheduleConfig{},
 		entryIDs:       map[string]cron.EntryID{},
 		runPruneEvery:  5 * time.Minute,
 		runPruneEveryN: 100,
@@ -82,8 +86,8 @@ func NewEngine(cfg Config, store Store, logger *slog.Logger) (*Engine, error) {
 	return engine, nil
 }
 
-func (e *Engine) registerSchedule(schedule ScheduleConfig) error {
-	NormalizeSchedule(&schedule)
+func (e *Engine) registerSchedule(schedule config.ScheduleConfig) error {
+	config.NormalizeSchedule(&schedule)
 	if err := validateSchedule(schedule, e.cfg.Faktory); err != nil {
 		return err
 	}
@@ -95,9 +99,9 @@ func (e *Engine) registerSchedule(schedule ScheduleConfig) error {
 	return nil
 }
 
-func validateSchedule(schedule ScheduleConfig, faktoryInstances []FaktoryInstance) error {
-	NormalizeSchedule(&schedule)
-	if err := (Config{Faktory: faktoryInstances, Schedules: []ScheduleConfig{schedule}}).Validate(); err != nil {
+func validateSchedule(schedule config.ScheduleConfig, faktoryInstances []config.FaktoryInstance) error {
+	config.NormalizeSchedule(&schedule)
+	if err := (config.Config{Faktory: faktoryInstances, Schedules: []config.ScheduleConfig{schedule}}).Validate(); err != nil {
 		return err
 	}
 	if schedule.ScheduleType == "cron" {
@@ -112,7 +116,7 @@ func validateSchedule(schedule ScheduleConfig, faktoryInstances []FaktoryInstanc
 	return nil
 }
 
-func cronSpec(schedule ScheduleConfig) string {
+func cronSpec(schedule config.ScheduleConfig) string {
 	spec := schedule.Cron
 	if schedule.Timezone != "" {
 		spec = "CRON_TZ=" + schedule.Timezone + " " + spec
@@ -120,18 +124,18 @@ func cronSpec(schedule ScheduleConfig) string {
 	return spec
 }
 
-func (e *Engine) cronSchedule(schedule ScheduleConfig) (cron.Schedule, error) {
+func (e *Engine) cronSchedule(schedule config.ScheduleConfig) (cron.Schedule, error) {
 	switch schedule.ScheduleType {
 	case "cron":
 		return e.parser.Parse(cronSpec(schedule))
 	case "rate":
-		start, err := parseLocalDateTime(schedule.StartsAt, schedule.Timezone)
+		start, err := config.ParseLocalDateTime(schedule.StartsAt, schedule.Timezone)
 		if err != nil {
 			return nil, err
 		}
 		return rateSchedule{start: start, interval: rateDuration(schedule)}, nil
 	case "once":
-		runAt, err := parseLocalDateTime(schedule.RunAt, schedule.Timezone)
+		runAt, err := config.ParseLocalDateTime(schedule.RunAt, schedule.Timezone)
 		if err != nil {
 			return nil, err
 		}
@@ -141,11 +145,11 @@ func (e *Engine) cronSchedule(schedule ScheduleConfig) (cron.Schedule, error) {
 		}
 		return onceSchedule{runAt: fireAt}, nil
 	default:
-		return nil, ConfigError("unsupported schedule_type for schedule " + schedule.Name + ": " + schedule.ScheduleType)
+		return nil, config.ConfigError("unsupported schedule_type for schedule " + schedule.Name + ": " + schedule.ScheduleType)
 	}
 }
 
-func rateDuration(schedule ScheduleConfig) time.Duration {
+func rateDuration(schedule config.ScheduleConfig) time.Duration {
 	switch schedule.RateUnit {
 	case "minutes":
 		return time.Duration(schedule.RateInterval) * time.Minute
@@ -158,9 +162,9 @@ func rateDuration(schedule ScheduleConfig) time.Duration {
 	}
 }
 
-func scheduledAtForSchedule(schedule ScheduleConfig, now time.Time) time.Time {
+func scheduledAtForSchedule(schedule config.ScheduleConfig, now time.Time) time.Time {
 	if schedule.ScheduleType == "once" {
-		runAt, err := parseLocalDateTime(schedule.RunAt, schedule.Timezone)
+		runAt, err := config.ParseLocalDateTime(schedule.RunAt, schedule.Timezone)
 		if err == nil {
 			return runAt.UTC()
 		}
@@ -168,8 +172,8 @@ func scheduledAtForSchedule(schedule ScheduleConfig, now time.Time) time.Time {
 	return now.UTC().Truncate(time.Minute)
 }
 
-func (e *Engine) SaveSchedule(originalName string, schedule ScheduleConfig) error {
-	NormalizeSchedule(&schedule)
+func (e *Engine) SaveSchedule(originalName string, schedule config.ScheduleConfig) error {
+	config.NormalizeSchedule(&schedule)
 	if err := validateSchedule(schedule, e.cfg.Faktory); err != nil {
 		return err
 	}
@@ -177,11 +181,11 @@ func (e *Engine) SaveSchedule(originalName string, schedule ScheduleConfig) erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	oldSchedule, hadOriginal := ScheduleConfig{}, false
+	oldSchedule, hadOriginal := config.ScheduleConfig{}, false
 	if originalName != "" {
 		oldSchedule, hadOriginal = e.schedules[originalName]
 		if !hadOriginal {
-			return ConfigError("schedule not found: " + originalName)
+			return config.ConfigError("schedule not found: " + originalName)
 		}
 		if schedule.ScheduleType == "once" && oldSchedule.ScheduleType == "once" && schedule.RunAt == oldSchedule.RunAt && schedule.Timezone == oldSchedule.Timezone && schedule.CompletedAt == nil {
 			schedule.CompletedAt = oldSchedule.CompletedAt
@@ -190,12 +194,12 @@ func (e *Engine) SaveSchedule(originalName string, schedule ScheduleConfig) erro
 
 	if originalName == "" {
 		if _, exists := e.schedules[schedule.Name]; exists {
-			return ConfigError("schedule already exists: " + schedule.Name)
+			return config.ConfigError("schedule already exists: " + schedule.Name)
 		}
 	}
 	if originalName != "" && originalName != schedule.Name {
 		if _, exists := e.schedules[schedule.Name]; exists {
-			return ConfigError("schedule already exists: " + schedule.Name)
+			return config.ConfigError("schedule already exists: " + schedule.Name)
 		}
 	}
 
@@ -230,7 +234,7 @@ func (e *Engine) DeleteSchedule(name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, ok := e.schedules[name]; !ok {
-		return ConfigError("schedule not found: " + name)
+		return config.ConfigError("schedule not found: " + name)
 	}
 	e.removeScheduleLocked(name)
 	return e.store.DeleteSchedule(name)
@@ -242,7 +246,7 @@ func (e *Engine) TogglePause(name string) (paused bool, err error) {
 
 	schedule, ok := e.schedules[name]
 	if !ok {
-		return false, ConfigError("schedule not found: " + name)
+		return false, config.ConfigError("schedule not found: " + name)
 	}
 
 	schedule.Paused = !schedule.Paused
@@ -264,7 +268,7 @@ func (e *Engine) TogglePause(name string) (paused bool, err error) {
 	return schedule.Paused, nil
 }
 
-func (e *Engine) registerScheduleLocked(schedule ScheduleConfig) error {
+func (e *Engine) registerScheduleLocked(schedule config.ScheduleConfig) error {
 	e.removeEntryLocked(schedule.Name)
 	if schedule.Paused {
 		return nil
@@ -311,11 +315,11 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-func (e *Engine) Schedules() []ScheduleConfig {
+func (e *Engine) Schedules() []config.ScheduleConfig {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	schedules := make([]ScheduleConfig, 0, len(e.schedules))
+	schedules := make([]config.ScheduleConfig, 0, len(e.schedules))
 	for _, schedule := range e.schedules {
 		if entryID, ok := e.entryIDs[schedule.Name]; ok {
 			entry := e.cron.Entry(entryID)
@@ -324,7 +328,7 @@ func (e *Engine) Schedules() []ScheduleConfig {
 		}
 		schedules = append(schedules, schedule)
 	}
-	slices.SortFunc(schedules, func(a, b ScheduleConfig) int {
+	slices.SortFunc(schedules, func(a, b config.ScheduleConfig) int {
 		if a.Name < b.Name {
 			return -1
 		}
@@ -343,12 +347,12 @@ func (e *Engine) FaktoryInstanceNames() []string {
 func (e *Engine) FaktoryQueues(ctx context.Context, instanceName string) ([]string, error) {
 	inst, ok := e.cfg.FindFaktoryInstance(instanceName)
 	if !ok {
-		return nil, ConfigError("unknown faktory instance: " + instanceName)
+		return nil, config.ConfigError("unknown faktory instance: " + instanceName)
 	}
-	return faktoryQueues(ctx, inst)
+	return target.FaktoryQueues(ctx, inst)
 }
 
-func (e *Engine) Runs(limit int) ([]Run, error) {
+func (e *Engine) Runs(limit int) ([]model.Run, error) {
 	return e.store.ListRuns(limit)
 }
 
@@ -393,39 +397,39 @@ func (e *Engine) maybePruneRuns() {
 	}
 }
 
-func (e *Engine) TriggerManual(ctx context.Context, name string) (Run, error) {
+func (e *Engine) TriggerManual(ctx context.Context, name string) (model.Run, error) {
 	e.mu.RLock()
 	schedule, ok := e.schedules[name]
 	e.mu.RUnlock()
 	if !ok {
-		return Run{}, ConfigError("schedule not found: " + name)
+		return model.Run{}, config.ConfigError("schedule not found: " + name)
 	}
 	if schedule.Paused {
-		return Run{}, ConfigError("cannot run paused job: " + name)
+		return model.Run{}, config.ConfigError("cannot run paused job: " + name)
 	}
 	return e.Trigger(ctx, name, "manual", time.Now().UTC())
 }
 
-func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, scheduledAt time.Time) (Run, error) {
+func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, scheduledAt time.Time) (model.Run, error) {
 	e.mu.RLock()
 	schedule, ok := e.schedules[name]
 	e.mu.RUnlock()
 	if !ok {
-		return Run{}, ConfigError("schedule not found: " + name)
+		return model.Run{}, config.ConfigError("schedule not found: " + name)
 	}
 
 	if !schedule.AllowsConcurrentRuns() {
 		running, err := e.store.HasRunningRun(schedule.Name)
 		if err != nil {
-			return Run{}, err
+			return model.Run{}, err
 		}
 		if running {
-			run := Run{
+			run := model.Run{
 				ID:           runID(schedule.Name, triggeredBy, scheduledAt),
 				ScheduleName: schedule.Name,
 				TargetType:   schedule.Target.Type,
 				TriggeredBy:  triggeredBy,
-				Status:       RunSkipped,
+				Status:       model.RunSkipped,
 				ScheduledAt:  scheduledAt,
 				StartedAt:    time.Now().UTC(),
 				Error:        "skipped because a previous run is still running",
@@ -433,7 +437,7 @@ func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, s
 			finished := time.Now().UTC()
 			run.FinishedAt = &finished
 			if err := e.store.SaveRun(run); err != nil {
-				return Run{}, err
+				return model.Run{}, err
 			}
 			e.logRunEvent(run)
 			e.maybePruneRuns()
@@ -441,17 +445,17 @@ func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, s
 		}
 	}
 
-	run := Run{
+	run := model.Run{
 		ID:           runID(schedule.Name, triggeredBy, scheduledAt),
 		ScheduleName: schedule.Name,
 		TargetType:   schedule.Target.Type,
 		TriggeredBy:  triggeredBy,
-		Status:       RunRunning,
+		Status:       model.RunRunning,
 		ScheduledAt:  scheduledAt,
 		StartedAt:    time.Now().UTC(),
 	}
 	if err := e.store.SaveRun(run); err != nil {
-		return Run{}, err
+		return model.Run{}, err
 	}
 	if schedule.ScheduleType == "once" && triggeredBy == "scheduler" {
 		if err := e.markOneTimeCompleted(schedule.Name); err != nil {
@@ -473,7 +477,7 @@ func (e *Engine) markOneTimeCompleted(name string) error {
 
 	schedule, ok := e.schedules[name]
 	if !ok {
-		return ConfigError("schedule not found: " + name)
+		return config.ConfigError("schedule not found: " + name)
 	}
 	if schedule.ScheduleType != "once" || schedule.CompletedAt != nil {
 		return nil
@@ -488,20 +492,20 @@ func (e *Engine) markOneTimeCompleted(name string) error {
 	return nil
 }
 
-func (e *Engine) executeRun(schedule ScheduleConfig, run Run) {
+func (e *Engine) executeRun(schedule config.ScheduleConfig, run model.Run) {
 	ctx, cancel := context.WithTimeout(context.Background(), schedule.Timeout.Duration)
 	defer cancel()
 
-	result, err := TriggerTarget(ctx, schedule, run, e.cfg.Faktory)
+	result, err := target.TriggerTarget(ctx, schedule, run, e.cfg.Faktory)
 	finished := time.Now().UTC()
 	run.FinishedAt = &finished
 	run.StructuredOutput = result.StructuredOutput
 	if err != nil {
-		run.Status = RunFailed
+		run.Status = model.RunFailed
 		run.Error = err.Error()
 		e.logger.Warn("run failed", "schedule", run.ScheduleName, "run_id", run.ID, "error", err)
 	} else {
-		run.Status = RunSucceeded
+		run.Status = model.RunSucceeded
 		e.logger.Info("run succeeded", "schedule", run.ScheduleName, "run_id", run.ID)
 	}
 	if err := e.store.UpdateRun(run); err != nil {
@@ -511,7 +515,7 @@ func (e *Engine) executeRun(schedule ScheduleConfig, run Run) {
 	e.maybePruneRuns()
 }
 
-func (e *Engine) logRunEvent(run Run) {
+func (e *Engine) logRunEvent(run model.Run) {
 	if e.cfg.RunLogging.Stdout == "off" {
 		return
 	}
@@ -537,7 +541,7 @@ func (e *Engine) logRunEvent(run Run) {
 	e.logger.Info("run event", attrs...)
 }
 
-func runSummaryOutputAttrs(run Run) []any {
+func runSummaryOutputAttrs(run model.Run) []any {
 	if len(run.StructuredOutput) == 0 {
 		return nil
 	}

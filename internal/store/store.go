@@ -1,4 +1,4 @@
-package relay
+package store
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -24,14 +26,14 @@ var (
 const runStartedAtIndexTimeLayout = "20060102T150405.000000000Z"
 
 type Store interface {
-	SaveSchedule(schedule ScheduleConfig) error
+	SaveSchedule(schedule config.ScheduleConfig) error
 	DeleteSchedule(name string) error
-	ListSchedules() ([]ScheduleConfig, error)
-	SaveRun(run Run) error
-	UpdateRun(run Run) error
-	ListRuns(limit int) ([]Run, error)
+	ListSchedules() ([]config.ScheduleConfig, error)
+	SaveRun(run model.Run) error
+	UpdateRun(run model.Run) error
+	ListRuns(limit int) ([]model.Run, error)
 	ClearRuns() error
-	PruneRuns(retention RunRetentionConfig, now time.Time) (RunRetentionResult, error)
+	PruneRuns(retention config.RunRetentionConfig, now time.Time) (RunRetentionResult, error)
 	HasRunningRun(scheduleName string) (bool, error)
 	Close() error
 }
@@ -43,18 +45,18 @@ type RunRetentionResult struct {
 
 type MemoryStore struct {
 	mu        sync.RWMutex
-	runs      map[string]Run
-	schedules map[string]ScheduleConfig
+	runs      map[string]model.Run
+	schedules map[string]config.ScheduleConfig
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{runs: map[string]Run{}, schedules: map[string]ScheduleConfig{}}
+	return &MemoryStore{runs: map[string]model.Run{}, schedules: map[string]config.ScheduleConfig{}}
 }
 
-func (s *MemoryStore) SaveSchedule(schedule ScheduleConfig) error {
+func (s *MemoryStore) SaveSchedule(schedule config.ScheduleConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	NormalizeSchedule(&schedule)
+	config.NormalizeSchedule(&schedule)
 	s.schedules[schedule.Name] = schedule
 	return nil
 }
@@ -66,10 +68,10 @@ func (s *MemoryStore) DeleteSchedule(name string) error {
 	return nil
 }
 
-func (s *MemoryStore) ListSchedules() ([]ScheduleConfig, error) {
+func (s *MemoryStore) ListSchedules() ([]config.ScheduleConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	schedules := make([]ScheduleConfig, 0, len(s.schedules))
+	schedules := make([]config.ScheduleConfig, 0, len(s.schedules))
 	for _, schedule := range s.schedules {
 		schedules = append(schedules, schedule)
 	}
@@ -77,21 +79,21 @@ func (s *MemoryStore) ListSchedules() ([]ScheduleConfig, error) {
 	return schedules, nil
 }
 
-func (s *MemoryStore) SaveRun(run Run) error {
+func (s *MemoryStore) SaveRun(run model.Run) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runs[run.ID] = run
 	return nil
 }
 
-func (s *MemoryStore) UpdateRun(run Run) error {
+func (s *MemoryStore) UpdateRun(run model.Run) error {
 	return s.SaveRun(run)
 }
 
-func (s *MemoryStore) ListRuns(limit int) ([]Run, error) {
+func (s *MemoryStore) ListRuns(limit int) ([]model.Run, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	runs := make([]Run, 0, len(s.runs))
+	runs := make([]model.Run, 0, len(s.runs))
 	for _, run := range s.runs {
 		runs = append(runs, run)
 	}
@@ -102,11 +104,11 @@ func (s *MemoryStore) ListRuns(limit int) ([]Run, error) {
 func (s *MemoryStore) ClearRuns() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.runs = map[string]Run{}
+	s.runs = map[string]model.Run{}
 	return nil
 }
 
-func (s *MemoryStore) PruneRuns(retention RunRetentionConfig, now time.Time) (RunRetentionResult, error) {
+func (s *MemoryStore) PruneRuns(retention config.RunRetentionConfig, now time.Time) (RunRetentionResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -125,7 +127,7 @@ func (s *MemoryStore) HasRunningRun(scheduleName string) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, run := range s.runs {
-		if run.ScheduleName == scheduleName && run.Status == RunRunning {
+		if run.ScheduleName == scheduleName && run.Status == model.RunRunning {
 			return true, nil
 		}
 	}
@@ -177,8 +179,8 @@ func OpenBoltStore(path string) (*BoltStore, error) {
 	return store, nil
 }
 
-func (s *BoltStore) SaveSchedule(schedule ScheduleConfig) error {
-	NormalizeSchedule(&schedule)
+func (s *BoltStore) SaveSchedule(schedule config.ScheduleConfig) error {
+	config.NormalizeSchedule(&schedule)
 	return s.db.Update(func(tx *bolt.Tx) error {
 		raw, err := json.Marshal(schedule)
 		if err != nil {
@@ -194,11 +196,11 @@ func (s *BoltStore) DeleteSchedule(name string) error {
 	})
 }
 
-func (s *BoltStore) ListSchedules() ([]ScheduleConfig, error) {
-	var schedules []ScheduleConfig
+func (s *BoltStore) ListSchedules() ([]config.ScheduleConfig, error) {
+	var schedules []config.ScheduleConfig
 	err := s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket(schedulesBucket).ForEach(func(_, value []byte) error {
-			var schedule ScheduleConfig
+			var schedule config.ScheduleConfig
 			if err := json.Unmarshal(value, &schedule); err != nil {
 				return err
 			}
@@ -213,22 +215,22 @@ func (s *BoltStore) ListSchedules() ([]ScheduleConfig, error) {
 	return schedules, nil
 }
 
-func (s *BoltStore) SaveRun(run Run) error {
+func (s *BoltStore) SaveRun(run model.Run) error {
 	return s.writeRun(run)
 }
 
-func (s *BoltStore) UpdateRun(run Run) error {
+func (s *BoltStore) UpdateRun(run model.Run) error {
 	return s.writeRun(run)
 }
 
-func (s *BoltStore) ListRuns(limit int) ([]Run, error) {
-	runs := []Run{}
+func (s *BoltStore) ListRuns(limit int) ([]model.Run, error) {
+	runs := []model.Run{}
 	err := s.db.View(func(tx *bolt.Tx) error {
 		runsByStartedAt := tx.Bucket(runsByStartedAtBucket)
 		runsBucket := tx.Bucket(runsBucket)
 		cursor := runsByStartedAt.Cursor()
 		for key, value := cursor.Last(); key != nil; key, value = cursor.Prev() {
-			var run Run
+			var run model.Run
 			raw := runsBucket.Get(value)
 			if raw == nil {
 				continue
@@ -263,7 +265,7 @@ func (s *BoltStore) ClearRuns() error {
 	})
 }
 
-func (s *BoltStore) PruneRuns(retention RunRetentionConfig, now time.Time) (RunRetentionResult, error) {
+func (s *BoltStore) PruneRuns(retention config.RunRetentionConfig, now time.Time) (RunRetentionResult, error) {
 	var result RunRetentionResult
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		deleted := 0
@@ -312,7 +314,7 @@ func pruneRunsOlderThan(tx *bolt.Tx, cutoff time.Time) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if run.Status == RunRunning {
+		if run.Status == model.RunRunning {
 			continue
 		}
 		victims = append(victims, victim{key: slices.Clone(key), id: slices.Clone(value)})
@@ -345,7 +347,7 @@ func pruneRunsOverCount(tx *bolt.Tx, maxRecords int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if run.Status == RunRunning {
+		if run.Status == model.RunRunning {
 			continue
 		}
 		victims = append(victims, victim{key: slices.Clone(key), id: slices.Clone(value)})
@@ -380,14 +382,14 @@ func (s *BoltStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *BoltStore) writeRun(run Run) error {
+func (s *BoltStore) writeRun(run model.Run) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		raw, err := json.Marshal(run)
 		if err != nil {
 			return err
 		}
 		bucket := tx.Bucket(runsBucket)
-		var oldRun Run
+		var oldRun model.Run
 		hadOldRun := false
 		if oldRaw := bucket.Get([]byte(run.ID)); oldRaw != nil {
 			if err := json.Unmarshal(oldRaw, &oldRun); err != nil {
@@ -425,7 +427,7 @@ func rebuildRunIndexes(tx *bolt.Tx) error {
 	}
 	count := 0
 	if err := tx.Bucket(runsBucket).ForEach(func(_, value []byte) error {
-		var run Run
+		var run model.Run
 		if err := json.Unmarshal(value, &run); err != nil {
 			return err
 		}
@@ -452,21 +454,21 @@ func resetBucket(tx *bolt.Tx, name []byte) error {
 	return err
 }
 
-func addRunIndexes(tx *bolt.Tx, run Run) error {
+func addRunIndexes(tx *bolt.Tx, run model.Run) error {
 	if err := tx.Bucket(runsByStartedAtBucket).Put(runStartedAtIndexKey(run), []byte(run.ID)); err != nil {
 		return err
 	}
-	if run.Status == RunRunning {
+	if run.Status == model.RunRunning {
 		return tx.Bucket(runningRunsByScheduleBucket).Put(runningRunScheduleKey(run), []byte(run.ID))
 	}
 	return nil
 }
 
-func removeRunIndexes(tx *bolt.Tx, run Run) error {
+func removeRunIndexes(tx *bolt.Tx, run model.Run) error {
 	if err := tx.Bucket(runsByStartedAtBucket).Delete(runStartedAtIndexKey(run)); err != nil {
 		return err
 	}
-	if run.Status == RunRunning {
+	if run.Status == model.RunRunning {
 		return tx.Bucket(runningRunsByScheduleBucket).Delete(runningRunScheduleKey(run))
 	}
 	return nil
@@ -480,7 +482,7 @@ func deleteRunByIndexedKey(tx *bolt.Tx, indexKey []byte, id []byte) error {
 	if err := tx.Bucket(runsByStartedAtBucket).Delete(indexKey); err != nil {
 		return err
 	}
-	if run.Status == RunRunning {
+	if run.Status == model.RunRunning {
 		if err := tx.Bucket(runningRunsByScheduleBucket).Delete(runningRunScheduleKey(run)); err != nil {
 			return err
 		}
@@ -494,25 +496,25 @@ func deleteRunByIndexedKey(tx *bolt.Tx, indexKey []byte, id []byte) error {
 	return nil
 }
 
-func runByID(tx *bolt.Tx, id string) (Run, error) {
+func runByID(tx *bolt.Tx, id string) (model.Run, error) {
 	raw := tx.Bucket(runsBucket).Get([]byte(id))
 	if raw == nil {
-		return Run{}, ConfigError("run not found: " + id)
+		return model.Run{}, config.ConfigError("run not found: " + id)
 	}
-	var run Run
+	var run model.Run
 	if err := json.Unmarshal(raw, &run); err != nil {
-		return Run{}, err
+		return model.Run{}, err
 	}
 	return run, nil
 }
 
-func runStartedAtIndexKey(run Run) []byte {
+func runStartedAtIndexKey(run model.Run) []byte {
 	return []byte(run.StartedAt.UTC().Format(runStartedAtIndexTimeLayout) + "|" + run.ID)
 }
 
 func startedAtFromRunIndexKey(key []byte) (time.Time, error) {
 	if len(key) < len(runStartedAtIndexTimeLayout) {
-		return time.Time{}, ConfigError("invalid run time index key")
+		return time.Time{}, config.ConfigError("invalid run time index key")
 	}
 	return time.Parse(runStartedAtIndexTimeLayout, string(key[:len(runStartedAtIndexTimeLayout)]))
 }
@@ -521,12 +523,12 @@ func runningRunSchedulePrefix(scheduleName string) []byte {
 	return []byte(scheduleName + "\x00")
 }
 
-func runningRunScheduleKey(run Run) []byte {
+func runningRunScheduleKey(run model.Run) []byte {
 	return []byte(run.ScheduleName + "\x00" + run.ID)
 }
 
-func isCompletedRun(run Run) bool {
-	return run.Status != RunRunning
+func isCompletedRun(run model.Run) bool {
+	return run.Status != model.RunRunning
 }
 
 func completedRunCount(tx *bolt.Tx) (int, error) {
@@ -535,7 +537,7 @@ func completedRunCount(tx *bolt.Tx) (int, error) {
 		return 0, nil
 	}
 	if len(raw) != 8 {
-		return 0, ConfigError("invalid completed run count")
+		return 0, config.ConfigError("invalid completed run count")
 	}
 	return int(binary.BigEndian.Uint64(raw)), nil
 }
@@ -557,13 +559,13 @@ func incrementCompletedRunCount(tx *bolt.Tx, delta int) error {
 	return setCompletedRunCount(tx, count+delta)
 }
 
-func sortRuns(runs []Run) {
-	slices.SortFunc(runs, func(a, b Run) int {
+func sortRuns(runs []model.Run) {
+	slices.SortFunc(runs, func(a, b model.Run) int {
 		return b.StartedAt.Compare(a.StartedAt)
 	})
 }
 
-func trimRuns(runs []Run, limit int) []Run {
+func trimRuns(runs []model.Run, limit int) []model.Run {
 	if limit <= 0 || limit > len(runs) {
 		return runs
 	}
@@ -572,17 +574,17 @@ func trimRuns(runs []Run, limit int) []Run {
 
 type storedRun struct {
 	id  string
-	run Run
+	run model.Run
 }
 
-func pruneRuns(runs []storedRun, retention RunRetentionConfig, now time.Time) (RunRetentionResult, map[string]struct{}) {
+func pruneRuns(runs []storedRun, retention config.RunRetentionConfig, now time.Time) (RunRetentionResult, map[string]struct{}) {
 	victims := map[string]struct{}{}
 	sortStoredRunsNewestFirst(runs)
 
 	if retention.MaxAgeDays > 0 {
 		cutoff := now.AddDate(0, 0, -retention.MaxAgeDays)
 		for _, run := range runs {
-			if run.run.Status != RunRunning && run.run.StartedAt.Before(cutoff) {
+			if run.run.Status != model.RunRunning && run.run.StartedAt.Before(cutoff) {
 				victims[run.id] = struct{}{}
 			}
 		}
@@ -591,13 +593,13 @@ func pruneRuns(runs []storedRun, retention RunRetentionConfig, now time.Time) (R
 	if retention.MaxRecords > 0 {
 		keptCount := 0
 		for _, run := range runs {
-			if _, deleted := victims[run.id]; !deleted && run.run.Status != RunRunning {
+			if _, deleted := victims[run.id]; !deleted && run.run.Status != model.RunRunning {
 				keptCount++
 			}
 		}
 		for i := len(runs) - 1; keptCount > retention.MaxRecords && i >= 0; i-- {
 			run := runs[i]
-			if run.run.Status == RunRunning {
+			if run.run.Status == model.RunRunning {
 				continue
 			}
 			if _, deleted := victims[run.id]; deleted {
@@ -633,8 +635,8 @@ func retainedCompletedRunCount(runs []storedRun, victims map[string]struct{}) in
 	return count
 }
 
-func sortSchedules(schedules []ScheduleConfig) {
-	slices.SortFunc(schedules, func(a, b ScheduleConfig) int {
+func sortSchedules(schedules []config.ScheduleConfig) {
+	slices.SortFunc(schedules, func(a, b config.ScheduleConfig) int {
 		if a.Name < b.Name {
 			return -1
 		}

@@ -1,4 +1,4 @@
-package relay
+package config
 
 import (
 	"os"
@@ -136,8 +136,8 @@ func TestConfigAcceptsAllowConcurrentRuns(t *testing.T) {
 
 func TestBundledConfigsStartWithoutSeedSchedules(t *testing.T) {
 	for _, path := range []string{
-		"../clock-relay.example.yaml",
-		"../examples/faktory/clock-relay.yaml",
+		"../../clock-relay.example.yaml",
+		"../../examples/faktory/clock-relay.yaml",
 	} {
 		t.Run(path, func(t *testing.T) {
 			cfg, err := LoadConfig(path)

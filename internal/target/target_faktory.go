@@ -1,4 +1,4 @@
-package relay
+package target
 
 import (
 	"context"
@@ -11,9 +11,10 @@ import (
 	"time"
 
 	faktory "github.com/contribsys/faktory/client"
+	"github.com/johnnycon/clock-relay/internal/config"
 )
 
-func triggerFaktory(ctx context.Context, schedule ScheduleConfig, instances []FaktoryInstance) (TargetResult, error) {
+func triggerFaktory(ctx context.Context, schedule config.ScheduleConfig, instances []config.FaktoryInstance) (TargetResult, error) {
 	if err := ctx.Err(); err != nil {
 		return TargetResult{}, err
 	}
@@ -38,13 +39,13 @@ func triggerFaktory(ctx context.Context, schedule ScheduleConfig, instances []Fa
 	return faktoryTargetResult(job), nil
 }
 
-func resolveFaktoryInstance(schedule ScheduleConfig, instances []FaktoryInstance) (FaktoryInstance, error) {
+func resolveFaktoryInstance(schedule config.ScheduleConfig, instances []config.FaktoryInstance) (config.FaktoryInstance, error) {
 	for _, inst := range instances {
 		if inst.Name == schedule.Target.Instance {
 			return inst, nil
 		}
 	}
-	return FaktoryInstance{}, ConfigError("unknown faktory instance: " + schedule.Target.Instance)
+	return config.FaktoryInstance{}, config.ConfigError("unknown faktory instance: " + schedule.Target.Instance)
 }
 
 func faktoryTargetResult(job *faktory.Job) TargetResult {
@@ -59,9 +60,9 @@ func faktoryTargetResult(job *faktory.Job) TargetResult {
 	}
 }
 
-func buildFaktoryJob(schedule ScheduleConfig) (*faktory.Job, error) {
+func buildFaktoryJob(schedule config.ScheduleConfig) (*faktory.Job, error) {
 	if schedule.Target.JobType == "" {
-		return nil, ConfigError("faktory target job_type is required")
+		return nil, config.ConfigError("faktory target job_type is required")
 	}
 	queue := schedule.Target.Queue
 	if queue == "" {
@@ -76,7 +77,7 @@ func buildFaktoryJob(schedule ScheduleConfig) (*faktory.Job, error) {
 	return job, nil
 }
 
-func openFaktoryClient(ctx context.Context, instance FaktoryInstance) (*faktory.Client, error) {
+func openFaktoryClient(ctx context.Context, instance config.FaktoryInstance) (*faktory.Client, error) {
 	server, err := faktoryServer(ctx, instance)
 	if err != nil {
 		return nil, err
@@ -84,7 +85,7 @@ func openFaktoryClient(ctx context.Context, instance FaktoryInstance) (*faktory.
 	return server.Open()
 }
 
-func faktoryServer(ctx context.Context, instance FaktoryInstance) (*faktory.Server, error) {
+func faktoryServer(ctx context.Context, instance config.FaktoryInstance) (*faktory.Server, error) {
 	server := faktory.DefaultServer()
 	if deadline, ok := ctx.Deadline(); ok {
 		if timeout := time.Until(deadline); timeout > 0 {
@@ -106,11 +107,11 @@ func faktoryServer(ctx context.Context, instance FaktoryInstance) (*faktory.Serv
 	case "tcp", "tcp+tls":
 		server.Network = parsed.Scheme
 	default:
-		return nil, ConfigError("unsupported faktory url scheme: " + parsed.Scheme)
+		return nil, config.ConfigError("unsupported faktory url scheme: " + parsed.Scheme)
 	}
 	server.Address = parsed.Host
 	if server.Address == "" {
-		return nil, ConfigError("faktory url must include host and port")
+		return nil, config.ConfigError("faktory url must include host and port")
 	}
 	if server.Network == "tcp+tls" && server.TLS == nil {
 		server.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
@@ -119,14 +120,14 @@ func faktoryServer(ctx context.Context, instance FaktoryInstance) (*faktory.Serv
 	return server, nil
 }
 
-func faktoryPassword(instance FaktoryInstance) string {
+func faktoryPassword(instance config.FaktoryInstance) string {
 	if instance.PasswordEnv == "" {
 		return ""
 	}
 	return os.Getenv(instance.PasswordEnv)
 }
 
-func faktoryQueues(ctx context.Context, instance FaktoryInstance) ([]string, error) {
+func FaktoryQueues(ctx context.Context, instance config.FaktoryInstance) ([]string, error) {
 	client, err := openFaktoryClient(ctx, instance)
 	if err != nil {
 		return nil, err

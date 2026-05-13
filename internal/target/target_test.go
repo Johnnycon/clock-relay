@@ -1,4 +1,4 @@
-package relay
+package target
 
 import (
 	"context"
@@ -6,12 +6,13 @@ import (
 	"time"
 
 	faktory "github.com/contribsys/faktory/client"
+	"github.com/johnnycon/clock-relay/internal/config"
 )
 
 func TestBuildFaktoryJob(t *testing.T) {
-	schedule := ScheduleConfig{
+	schedule := config.ScheduleConfig{
 		Name: "faktory-smoke",
-		Target: TargetConfig{
+		Target: config.TargetConfig{
 			Type:    "faktory",
 			Queue:   "critical",
 			JobType: "smoke_job",
@@ -61,9 +62,9 @@ func TestFaktoryTargetStructuredOutput(t *testing.T) {
 }
 
 func TestBuildFaktoryJobUsesEmptyArgsArray(t *testing.T) {
-	job, err := buildFaktoryJob(ScheduleConfig{
+	job, err := buildFaktoryJob(config.ScheduleConfig{
 		Name: "no-args",
-		Target: TargetConfig{
+		Target: config.TargetConfig{
 			Type:    "faktory",
 			JobType: "no_args_job",
 		},
@@ -83,7 +84,7 @@ func TestFaktoryServerParsesURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	server, err := faktoryServer(ctx, FaktoryInstance{URL: "tcp://faktory:7419"})
+	server, err := faktoryServer(ctx, config.FaktoryInstance{URL: "tcp://faktory:7419"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestFaktoryServerAcceptsBareAddress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	server, err := faktoryServer(ctx, FaktoryInstance{URL: "faktory:7419"})
+	server, err := faktoryServer(ctx, config.FaktoryInstance{URL: "faktory:7419"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestFaktoryServerUsesPasswordEnv(t *testing.T) {
 
 	t.Setenv("TEST_FAKTORY_PW", "env-secret")
 
-	server, err := faktoryServer(ctx, FaktoryInstance{
+	server, err := faktoryServer(ctx, config.FaktoryInstance{
 		URL:         "tcp://faktory:7419",
 		PasswordEnv: "TEST_FAKTORY_PW",
 	})
@@ -136,7 +137,7 @@ func TestFaktoryServerNoPasswordWithoutPasswordEnv(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	server, err := faktoryServer(ctx, FaktoryInstance{URL: "tcp://faktory:7419"})
+	server, err := faktoryServer(ctx, config.FaktoryInstance{URL: "tcp://faktory:7419"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestFaktoryServerEmptyPasswordEnvValueMeansNoPassword(t *testing.T) {
 
 	t.Setenv("TEST_EMPTY_PW", "")
 
-	server, err := faktoryServer(ctx, FaktoryInstance{
+	server, err := faktoryServer(ctx, config.FaktoryInstance{
 		URL:         "tcp://faktory:7419",
 		PasswordEnv: "TEST_EMPTY_PW",
 	})
@@ -164,13 +165,13 @@ func TestFaktoryServerEmptyPasswordEnvValueMeansNoPassword(t *testing.T) {
 }
 
 func TestResolveFaktoryInstance(t *testing.T) {
-	instances := []FaktoryInstance{
+	instances := []config.FaktoryInstance{
 		{Name: "prod", URL: "tcp://prod-faktory:7419", PasswordEnv: "PROD_FAKTORY_PW"},
 		{Name: "staging", URL: "tcp://staging-faktory:7419"},
 	}
 
 	t.Run("resolves named instance", func(t *testing.T) {
-		schedule := ScheduleConfig{Target: TargetConfig{Instance: "prod"}}
+		schedule := config.ScheduleConfig{Target: config.TargetConfig{Instance: "prod"}}
 		inst, err := resolveFaktoryInstance(schedule, instances)
 		if err != nil {
 			t.Fatal(err)
@@ -184,7 +185,7 @@ func TestResolveFaktoryInstance(t *testing.T) {
 	})
 
 	t.Run("errors on unknown instance", func(t *testing.T) {
-		schedule := ScheduleConfig{Target: TargetConfig{Instance: "nonexistent"}}
+		schedule := config.ScheduleConfig{Target: config.TargetConfig{Instance: "nonexistent"}}
 		_, err := resolveFaktoryInstance(schedule, instances)
 		if err == nil {
 			t.Fatal("expected error for unknown instance")
@@ -192,7 +193,7 @@ func TestResolveFaktoryInstance(t *testing.T) {
 	})
 
 	t.Run("errors on missing instance", func(t *testing.T) {
-		schedule := ScheduleConfig{Target: TargetConfig{}}
+		schedule := config.ScheduleConfig{Target: config.TargetConfig{}}
 		_, err := resolveFaktoryInstance(schedule, instances)
 		if err == nil {
 			t.Fatal("expected error for missing instance")

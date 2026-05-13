@@ -135,15 +135,14 @@ license and `THIRD_PARTY_NOTICES.md` for dependency license notes.
 
 ## Current Shape
 
-Clock Relay has one Go binary in `cmd/clock-relay`. The main implementation lives under `relay`:
+Clock Relay has one Go binary in `cmd/clock-relay`. The product implementation lives under `internal` because the repo ships an app/container, not a public Go library API:
 
-- `config.go`: YAML/API config structs, validation, and defaults.
-- `engine.go`: schedule registration, manual triggers, runtime job CRUD, and run execution.
-- `store.go`: store interface plus memory and bbolt implementations.
-- `target.go`: HTTP target.
-- `target_faktory.go`: native Faktory enqueue target.
-- `http.go`: JSON API routes plus the server-rendered UI.
-- `model.go`: run model and statuses.
+- `internal/config`: YAML/API config structs, validation, and defaults.
+- `internal/model`: run model and statuses.
+- `internal/store`: store interface plus memory and bbolt implementations.
+- `internal/target`: HTTP and native Faktory targets.
+- `internal/engine`: schedule registration, manual triggers, runtime job CRUD, and run execution.
+- `internal/server`: JSON API routes plus the server-rendered UI.
 
 Persisted jobs and runs are stored in bbolt by default. YAML schedules can be used to seed a fresh store, but the bundled local configs start with no jobs. After jobs are created through the UI/API, bbolt is the source of truth.
 

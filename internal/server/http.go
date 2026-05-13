@@ -1,4 +1,4 @@
-package relay
+package server
 
 import (
 	"context"
@@ -12,20 +12,24 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/johnnycon/clock-relay/internal/config"
+	enginepkg "github.com/johnnycon/clock-relay/internal/engine"
+	"github.com/johnnycon/clock-relay/internal/model"
 )
 
 type HTTPServer struct {
-	engine *Engine
+	engine *enginepkg.Engine
 	logger *slog.Logger
 	tpl    *template.Template
 }
 
 type runView struct {
-	Run
+	model.Run
 	DisplayTimezone string
 }
 
-func NewHTTPServer(engine *Engine, logger *slog.Logger) http.Handler {
+func NewHTTPServer(engine *enginepkg.Engine, logger *slog.Logger) http.Handler {
 	server := &HTTPServer{
 		engine: engine,
 		logger: logger,
@@ -40,7 +44,7 @@ func NewHTTPServer(engine *Engine, logger *slog.Logger) http.Handler {
 			"nextRunLabel":    nextRunLabel,
 			"displayTime":     displayTime,
 			"displayRunTime":  displayRunTime,
-			"allowConcurrent": func(schedule ScheduleConfig) bool {
+			"allowConcurrent": func(schedule config.ScheduleConfig) bool {
 				return schedule.AllowsConcurrentRuns()
 			},
 			"uiEditableTarget": func(targetType string) bool {
@@ -83,7 +87,7 @@ func (s *HTTPServer) index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Schedules []ScheduleConfig
+		Schedules []config.ScheduleConfig
 		Runs      []runView
 		Timezones []string
 		JobFilter string
@@ -103,7 +107,7 @@ func (s *HTTPServer) index(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func runViews(runs []Run, schedules []ScheduleConfig) []runView {
+func runViews(runs []model.Run, schedules []config.ScheduleConfig) []runView {
 	timezones := map[string]string{}
 	for _, schedule := range schedules {
 		timezones[schedule.Name] = schedule.Timezone
@@ -124,15 +128,15 @@ func (s *HTTPServer) newSchedule(w http.ResponseWriter, r *http.Request) {
 	switch targetType {
 	case "faktory":
 		instances := s.engine.FaktoryInstanceNames()
-		schedule := ScheduleConfig{
+		schedule := config.ScheduleConfig{
 			ScheduleType:    "rate",
 			Cron:            "*/5 * * * *",
 			Timezone:        "UTC",
 			RateInterval:    5,
 			RateUnit:        "minutes",
-			Timeout:         Duration{Duration: 5 * time.Second},
+			Timeout:         config.Duration{Duration: 5 * time.Second},
 			AllowConcurrent: true,
-			Target:          TargetConfig{Type: "faktory"},
+			Target:          config.TargetConfig{Type: "faktory"},
 		}
 		if len(instances) == 1 {
 			schedule.Target.Instance = instances[0]
@@ -173,13 +177,13 @@ func (s *HTTPServer) editSchedule(w http.ResponseWriter, r *http.Request) {
 	s.renderScheduleForm(w, r, "Edit Job", "Save job", name, schedule)
 }
 
-func (s *HTTPServer) renderScheduleForm(w http.ResponseWriter, r *http.Request, title string, submitLabel string, originalName string, schedule ScheduleConfig) {
+func (s *HTTPServer) renderScheduleForm(w http.ResponseWriter, r *http.Request, title string, submitLabel string, originalName string, schedule config.ScheduleConfig) {
 	data := struct {
 		Title            string
 		SubmitLabel      string
 		OriginalName     string
 		IsNew            bool
-		Schedule         ScheduleConfig
+		Schedule         config.ScheduleConfig
 		Timezones        []string
 		FaktoryInstances []string
 		Error            string
@@ -203,13 +207,13 @@ func (s *HTTPServer) renderScheduleForm(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (s *HTTPServer) findSchedule(name string) (ScheduleConfig, bool) {
+func (s *HTTPServer) findSchedule(name string) (config.ScheduleConfig, bool) {
 	for _, schedule := range s.engine.Schedules() {
 		if schedule.Name == name {
 			return schedule, true
 		}
 	}
-	return ScheduleConfig{}, false
+	return config.ScheduleConfig{}, false
 }
 
 func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
@@ -366,33 +370,33 @@ func editScheduleNameFromPath(path string) (string, bool) {
 	return decoded, err == nil
 }
 
-func scheduleFromRequest(r *http.Request) (ScheduleConfig, string, error) {
+func scheduleFromRequest(r *http.Request) (config.ScheduleConfig, string, error) {
 	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 		var payload struct {
-			OriginalName string         `json:"original_name"`
-			Schedule     ScheduleConfig `json:"schedule"`
+			OriginalName string                `json:"original_name"`
+			Schedule     config.ScheduleConfig `json:"schedule"`
 		}
 		r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			return ScheduleConfig{}, "", err
+			return config.ScheduleConfig{}, "", err
 		}
 		return payload.Schedule, payload.OriginalName, nil
 	}
 
 	if err := r.ParseForm(); err != nil {
-		return ScheduleConfig{}, "", err
+		return config.ScheduleConfig{}, "", err
 	}
-	timeout := Duration{}
+	timeout := config.Duration{}
 	if raw := strings.TrimSpace(r.FormValue("timeout")); raw != "" {
 		parsed, err := time.ParseDuration(raw)
 		if err != nil {
-			return ScheduleConfig{}, "", err
+			return config.ScheduleConfig{}, "", err
 		}
 		timeout.Duration = parsed
 	}
 
 	targetType := strings.TrimSpace(r.FormValue("target_type"))
-	target := TargetConfig{Type: targetType}
+	target := config.TargetConfig{Type: targetType}
 	switch targetType {
 	case "http":
 		target.URL = strings.TrimSpace(r.FormValue("target_url"))
@@ -401,7 +405,7 @@ func scheduleFromRequest(r *http.Request) (ScheduleConfig, string, error) {
 	case "faktory":
 		args, err := parseJSONArgs(r.FormValue("target_faktory_args"))
 		if err != nil {
-			return ScheduleConfig{}, "", err
+			return config.ScheduleConfig{}, "", err
 		}
 		target.Instance = strings.TrimSpace(r.FormValue("target_faktory_instance"))
 		target.Queue = strings.TrimSpace(r.FormValue("target_faktory_queue"))
@@ -412,11 +416,11 @@ func scheduleFromRequest(r *http.Request) (ScheduleConfig, string, error) {
 	if raw := strings.TrimSpace(r.FormValue("rate_interval")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
-			return ScheduleConfig{}, "", err
+			return config.ScheduleConfig{}, "", err
 		}
 		rateInterval = parsed
 	}
-	return ScheduleConfig{
+	return config.ScheduleConfig{
 		Name:            strings.TrimSpace(r.FormValue("name")),
 		Description:     strings.TrimSpace(r.FormValue("description")),
 		ScheduleType:    strings.TrimSpace(r.FormValue("schedule_type")),
@@ -446,10 +450,10 @@ func parseJSONArgs(raw string) ([]any, error) {
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&args); err != nil {
-		return nil, ConfigError("faktory args must be a JSON array")
+		return nil, config.ConfigError("faktory args must be a JSON array")
 	}
 	if strings.TrimSpace(raw[decoder.InputOffset():]) != "" {
-		return nil, ConfigError("faktory args must contain one JSON array")
+		return nil, config.ConfigError("faktory args must contain one JSON array")
 	}
 	return args, nil
 }
@@ -540,7 +544,7 @@ func jsonArgs(values []any) string {
 	return string(raw)
 }
 
-func targetJSONArgs(target TargetConfig) string {
+func targetJSONArgs(target config.TargetConfig) string {
 	if target.Type != "faktory" {
 		return "[]"
 	}
@@ -559,7 +563,7 @@ func cronTimeSpan(hourStr, minuteStr, timezone string) template.HTML {
 }
 
 func dateTimeSpan(datetimeStr, timezone string) template.HTML {
-	t, err := parseLocalDateTime(datetimeStr, timezone)
+	t, err := config.ParseLocalDateTime(datetimeStr, timezone)
 	if err != nil {
 		return template.HTML(template.HTMLEscapeString(datetimeStr))
 	}
@@ -575,7 +579,7 @@ func scheduleTimezoneContext(timezone string) template.HTML {
 	return template.HTML(`<span class="timezone-context" data-source-tz="` + escaped + `" hidden></span>`)
 }
 
-func scheduleSummary(schedule ScheduleConfig) template.HTML {
+func scheduleSummary(schedule config.ScheduleConfig) template.HTML {
 	switch schedule.ScheduleType {
 	case "once":
 		if schedule.CompletedAt != nil {
@@ -618,7 +622,7 @@ func scheduleSummary(schedule ScheduleConfig) template.HTML {
 	}
 }
 
-func scheduleDetails(schedule ScheduleConfig) template.HTML {
+func scheduleDetails(schedule config.ScheduleConfig) template.HTML {
 	var parts []template.HTML
 	switch schedule.ScheduleType {
 	case "once":
@@ -643,14 +647,14 @@ func scheduleDetails(schedule ScheduleConfig) template.HTML {
 	return result + scheduleTimezoneContext(schedule.Timezone)
 }
 
-func concurrencyLabel(schedule ScheduleConfig) string {
+func concurrencyLabel(schedule config.ScheduleConfig) string {
 	if schedule.AllowsConcurrentRuns() {
 		return "Can overlap"
 	}
 	return "No overlap"
 }
 
-func nextRunLabel(schedule ScheduleConfig) template.HTML {
+func nextRunLabel(schedule config.ScheduleConfig) template.HTML {
 	if schedule.Paused {
 		return `<span class="status status-paused">paused</span>`
 	}

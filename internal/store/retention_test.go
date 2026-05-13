@@ -1,13 +1,13 @@
-package relay
+package store
 
 import (
 	"encoding/json"
-	"io"
-	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -16,11 +16,11 @@ func TestRunRetentionPrunesByRecordCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := tt.store
 			now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
-			saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), RunSucceeded, "")
-			saveTestRun(t, store, "middle", now.Add(-2*time.Hour), RunSucceeded, "")
-			saveTestRun(t, store, "newest", now.Add(-time.Hour), RunSucceeded, "")
+			saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), model.RunSucceeded, "")
+			saveTestRun(t, store, "middle", now.Add(-2*time.Hour), model.RunSucceeded, "")
+			saveTestRun(t, store, "newest", now.Add(-time.Hour), model.RunSucceeded, "")
 
-			result, err := store.PruneRuns(RunRetentionConfig{MaxRecords: 2}, now)
+			result, err := store.PruneRuns(config.RunRetentionConfig{MaxRecords: 2}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -37,10 +37,10 @@ func TestRunRetentionPrunesByAge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := tt.store
 			now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
-			saveTestRun(t, store, "expired", now.AddDate(0, 0, -8), RunSucceeded, "")
-			saveTestRun(t, store, "fresh", now.AddDate(0, 0, -2), RunSucceeded, "")
+			saveTestRun(t, store, "expired", now.AddDate(0, 0, -8), model.RunSucceeded, "")
+			saveTestRun(t, store, "fresh", now.AddDate(0, 0, -2), model.RunSucceeded, "")
 
-			result, err := store.PruneRuns(RunRetentionConfig{MaxAgeDays: 7}, now)
+			result, err := store.PruneRuns(config.RunRetentionConfig{MaxAgeDays: 7}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -57,10 +57,10 @@ func TestRunRetentionPreservesRunningRuns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := tt.store
 			now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
-			saveTestRun(t, store, "running-old", now.AddDate(0, 0, -8), RunRunning, "")
-			saveTestRun(t, store, "fresh", now.Add(-time.Hour), RunSucceeded, "")
+			saveTestRun(t, store, "running-old", now.AddDate(0, 0, -8), model.RunRunning, "")
+			saveTestRun(t, store, "fresh", now.Add(-time.Hour), model.RunSucceeded, "")
 
-			result, err := store.PruneRuns(RunRetentionConfig{MaxRecords: 1, MaxAgeDays: 7}, now)
+			result, err := store.PruneRuns(config.RunRetentionConfig{MaxRecords: 1, MaxAgeDays: 7}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,9 +84,9 @@ func TestBoltStoreUsesIndexesForRecentRunsAndRunningChecks(t *testing.T) {
 	})
 
 	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
-	saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), RunSucceeded, "")
-	saveTestRun(t, store, "running", now.Add(-2*time.Hour), RunRunning, "")
-	saveTestRun(t, store, "newest", now.Add(-time.Hour), RunSucceeded, "")
+	saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), model.RunSucceeded, "")
+	saveTestRun(t, store, "running", now.Add(-2*time.Hour), model.RunRunning, "")
+	saveTestRun(t, store, "newest", now.Add(-time.Hour), model.RunSucceeded, "")
 
 	running, err := store.HasRunningRun("retention")
 	if err != nil {
@@ -102,10 +102,10 @@ func TestBoltStoreUsesIndexesForRecentRunsAndRunningChecks(t *testing.T) {
 func TestBoltStoreRebuildsRunIndexesForExistingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "clock-relay.db")
 	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
-	if err := writeLegacyRunDB(path, []Run{
-		testRun("oldest", now.Add(-3*time.Hour), RunSucceeded),
-		testRun("running", now.Add(-2*time.Hour), RunRunning),
-		testRun("newest", now.Add(-time.Hour), RunSucceeded),
+	if err := writeLegacyRunDB(path, []model.Run{
+		testRun("oldest", now.Add(-3*time.Hour), model.RunSucceeded),
+		testRun("running", now.Add(-2*time.Hour), model.RunRunning),
+		testRun("newest", now.Add(-time.Hour), model.RunSucceeded),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,49 +130,6 @@ func TestBoltStoreRebuildsRunIndexesForExistingDatabase(t *testing.T) {
 	assertRunIDs(t, store, []string{"newest", "running", "oldest"})
 }
 
-func TestEnginePrunesRunHistoryOnStartup(t *testing.T) {
-	store := NewMemoryStore()
-	now := time.Now().UTC()
-	saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), RunSucceeded, "")
-	saveTestRun(t, store, "middle", now.Add(-2*time.Hour), RunSucceeded, "")
-	saveTestRun(t, store, "newest", now.Add(-time.Hour), RunSucceeded, "")
-
-	_, err := NewEngine(Config{
-		Store:        StoreConfig{Type: "memory"},
-		RunRetention: RunRetentionConfig{MaxRecords: 2},
-	}, store, nilLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertRunIDs(t, store, []string{"newest", "middle"})
-}
-
-func TestEnginePrunesRunHistoryOnCadenceAfterFinalRuns(t *testing.T) {
-	store := NewMemoryStore()
-	now := time.Now().UTC()
-	saveTestRun(t, store, "oldest", now.Add(-3*time.Hour), RunSucceeded, "")
-	saveTestRun(t, store, "middle", now.Add(-2*time.Hour), RunSucceeded, "")
-	saveTestRun(t, store, "newest", now.Add(-time.Hour), RunSucceeded, "")
-
-	engine, err := NewEngine(Config{
-		Store:        StoreConfig{Type: "memory"},
-		RunRetention: RunRetentionConfig{MaxRecords: 10},
-	}, store, nilLogger())
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine.cfg.RunRetention.MaxRecords = 2
-	engine.maybePruneRuns()
-
-	assertRunIDs(t, store, []string{"newest", "middle", "oldest"})
-
-	engine.lastRunPrune = time.Now().UTC().Add(-engine.runPruneEvery)
-	engine.maybePruneRuns()
-
-	assertRunIDs(t, store, []string{"newest", "middle"})
-}
-
 type retentionStoreCase struct {
 	name  string
 	store Store
@@ -195,7 +152,7 @@ func retentionStoreCases(t *testing.T) []retentionStoreCase {
 	}
 }
 
-func saveTestRun(t *testing.T, store Store, id string, startedAt time.Time, status RunStatus, raw string) {
+func saveTestRun(t *testing.T, store Store, id string, startedAt time.Time, status model.RunStatus, raw string) {
 	t.Helper()
 	run := testRun(id, startedAt, status)
 	if raw != "" {
@@ -206,8 +163,8 @@ func saveTestRun(t *testing.T, store Store, id string, startedAt time.Time, stat
 	}
 }
 
-func testRun(id string, startedAt time.Time, status RunStatus) Run {
-	run := Run{
+func testRun(id string, startedAt time.Time, status model.RunStatus) model.Run {
+	run := model.Run{
 		ID:           id,
 		ScheduleName: "retention",
 		TargetType:   "http",
@@ -216,14 +173,14 @@ func testRun(id string, startedAt time.Time, status RunStatus) Run {
 		ScheduledAt:  startedAt,
 		StartedAt:    startedAt,
 	}
-	if status != RunRunning {
+	if status != model.RunRunning {
 		finishedAt := startedAt.Add(time.Second)
 		run.FinishedAt = &finishedAt
 	}
 	return run
 }
 
-func writeLegacyRunDB(path string, runs []Run) error {
+func writeLegacyRunDB(path string, runs []model.Run) error {
 	db, err := bolt.Open(path, 0o600, nil)
 	if err != nil {
 		return err
@@ -264,8 +221,4 @@ func assertRunIDs(t *testing.T, store Store, want []string) {
 			t.Fatalf("expected run %d to be %q, got %#v", i, id, runs)
 		}
 	}
-}
-
-func nilLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
