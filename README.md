@@ -99,6 +99,11 @@ Release builds embed their version metadata:
 docker run --rm ghcr.io/johnnycon/clock-relay:0.0.1 clock-relay --version
 ```
 
+## License
+
+Clock Relay is licensed under the MIT License. See `LICENSE` for the project
+license and `THIRD_PARTY_NOTICES.md` for dependency license notes.
+
 ## Current Shape
 
 Clock Relay has one Go binary in `cmd/clock-relay`. The main implementation lives under `relay`:
