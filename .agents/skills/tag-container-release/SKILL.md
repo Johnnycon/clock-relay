@@ -5,7 +5,7 @@ description: Tag and push a new Clock Relay GitHub release tag that triggers the
 
 # Tag Container Release
 
-Use this workflow to create an annotated Git tag for a Clock Relay container release. Pushing a `v<major>.<minor>.<patch>` tag triggers `.github/workflows/container.yml`, which tests the repo and publishes a multi-architecture GHCR image.
+Use this workflow to create an annotated Git tag for a Clock Relay container release. Pushing a `v<major>.<minor>.<patch>` tag triggers `.github/workflows/container.yml`, which tests the repo, publishes a multi-architecture GHCR image, and creates or updates the matching GitHub Release.
 
 ## Version Selection
 
@@ -105,7 +105,22 @@ Ask the user to confirm the proposed version before creating the tag unless they
     ```text
     ghcr.io/johnnycon/clock-relay:<version-without-v>
     ```
-    The workflow builds and publishes `linux/amd64` and `linux/arm64` images for tag pushes matching `v*.*.*`.
+    The workflow builds and publishes `linux/amd64` and `linux/arm64` images for tag pushes matching `v*.*.*`. It also publishes or refreshes `latest` for quick local trials, but downstream deployment docs should use the exact version tag.
+
+12. Provide the canonical discovery links in the final response:
+    ```text
+    GitHub Release: https://github.com/Johnnycon/clock-relay/releases/tag/<version>
+    Container package: https://github.com/Johnnycon/clock-relay/pkgs/container/clock-relay
+    Exact image: ghcr.io/johnnycon/clock-relay:<version-without-v>
+    ```
+
+13. When the workflow has had time to run, verify the public surfaces if the user asked you to wait:
+    ```bash
+    gh run list --workflow Container --event push --limit 5
+    gh release view <version> --repo Johnnycon/clock-relay
+    docker manifest inspect ghcr.io/johnnycon/clock-relay:<version-without-v>
+    ```
+    If checking from public web pages instead of `gh`, verify the GitHub Release and GHCR package both show the exact image tag.
 
 ## Rules
 
@@ -115,3 +130,4 @@ Ask the user to confirm the proposed version before creating the tag unless they
 - List release-note commits in chronological order, oldest first.
 - Include PR numbers when they are already present in commit messages.
 - Do not push until the user confirms after seeing the final tag contents.
+- Treat `ghcr.io/johnnycon/clock-relay:<version-without-v>` as the canonical deployment image. Treat `latest` as a convenience tag only.
