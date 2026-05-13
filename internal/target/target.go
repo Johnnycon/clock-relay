@@ -1,4 +1,4 @@
-package relay
+package target
 
 import (
 	"bytes"
@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
 )
 
 const maxOutputBytes = 64 * 1024
@@ -19,18 +22,18 @@ type TargetResult struct {
 	StructuredOutput map[string]any
 }
 
-func TriggerTarget(ctx context.Context, schedule ScheduleConfig, run Run, faktoryInstances []FaktoryInstance) (TargetResult, error) {
+func TriggerTarget(ctx context.Context, schedule config.ScheduleConfig, run model.Run, faktoryInstances []config.FaktoryInstance) (TargetResult, error) {
 	switch schedule.Target.Type {
 	case "http":
 		return triggerHTTP(ctx, schedule, run)
 	case "faktory":
 		return triggerFaktory(ctx, schedule, faktoryInstances)
 	default:
-		return TargetResult{}, ConfigError("unsupported target type: " + schedule.Target.Type)
+		return TargetResult{}, config.ConfigError("unsupported target type: " + schedule.Target.Type)
 	}
 }
 
-func triggerHTTP(ctx context.Context, schedule ScheduleConfig, run Run) (TargetResult, error) {
+func triggerHTTP(ctx context.Context, schedule config.ScheduleConfig, run model.Run) (TargetResult, error) {
 	body := schedule.Target.Body
 	if body == nil {
 		body = map[string]any{
@@ -76,4 +79,3 @@ func triggerHTTP(ctx context.Context, schedule ScheduleConfig, run Run) (TargetR
 	}
 	return result, nil
 }
-

@@ -1,4 +1,4 @@
-package relay
+package engine
 
 import (
 	"context"
@@ -7,33 +7,41 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
+	"github.com/johnnycon/clock-relay/internal/store"
 )
 
-func testHTTPTarget(t *testing.T) TargetConfig {
+func testHTTPTarget(t *testing.T) config.TargetConfig {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	return TargetConfig{Type: "http", URL: srv.URL, Method: "POST"}
+	return config.TargetConfig{Type: "http", URL: srv.URL, Method: "POST"}
+}
+
+func localDateTimeString(t time.Time) string {
+	return t.Format("2006-01-02T15:04:05")
 }
 
 func TestManualTriggerRecordsRun(t *testing.T) {
 	target := testHTTPTarget(t)
-	cfg := Config{
-		Server: ServerConfig{Addr: ":0"},
-		Store:  StoreConfig{Type: "memory"},
-		Schedules: []ScheduleConfig{
+	cfg := config.Config{
+		Server: config.ServerConfig{Addr: ":0"},
+		Store:  config.StoreConfig{Type: "memory"},
+		Schedules: []config.ScheduleConfig{
 			{
-				Name:              "hello",
-				Cron:              "* * * * *",
-				Timezone:          "UTC",
-				Timeout:           Duration{Duration: 2 * time.Second},
-				Target:            target,
+				Name:     "hello",
+				Cron:     "* * * * *",
+				Timezone: "UTC",
+				Timeout:  config.Duration{Duration: 2 * time.Second},
+				Target:   target,
 			},
 		},
 	}
-	store := NewMemoryStore()
+	store := store.NewMemoryStore()
 	engine, err := NewEngine(cfg, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +51,7 @@ func TestManualTriggerRecordsRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != RunRunning {
+	if run.Status != model.RunRunning {
 		t.Fatalf("expected running status, got %s", run.Status)
 	}
 
@@ -53,7 +61,7 @@ func TestManualTriggerRecordsRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(runs) == 1 && runs[0].Status == RunSucceeded {
+		if len(runs) == 1 && runs[0].Status == model.RunSucceeded {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -63,19 +71,19 @@ func TestManualTriggerRecordsRun(t *testing.T) {
 
 func TestSaveAndDeleteSchedule(t *testing.T) {
 	target := testHTTPTarget(t)
-	cfg := Config{Store: StoreConfig{Type: "memory"}}
-	store := NewMemoryStore()
+	cfg := config.Config{Store: config.StoreConfig{Type: "memory"}}
+	store := store.NewMemoryStore()
 	engine, err := NewEngine(cfg, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	schedule := ScheduleConfig{
-		Name:              "cleanup",
-		Cron:              "*/10 * * * *",
-		Timezone:          "UTC",
-		Timeout:           Duration{Duration: 2 * time.Second},
-		Target:            target,
+	schedule := config.ScheduleConfig{
+		Name:     "cleanup",
+		Cron:     "*/10 * * * *",
+		Timezone: "UTC",
+		Timeout:  config.Duration{Duration: 2 * time.Second},
+		Target:   target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
 		t.Fatal(err)
@@ -105,19 +113,19 @@ func TestSaveAndDeleteSchedule(t *testing.T) {
 
 func TestSaveScheduleRejectsDuplicateCreate(t *testing.T) {
 	target := testHTTPTarget(t)
-	cfg := Config{Store: StoreConfig{Type: "memory"}}
-	store := NewMemoryStore()
+	cfg := config.Config{Store: config.StoreConfig{Type: "memory"}}
+	store := store.NewMemoryStore()
 	engine, err := NewEngine(cfg, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	schedule := ScheduleConfig{
-		Name:              "duplicate",
-		Cron:              "*/10 * * * *",
-		Timezone:          "UTC",
-		Timeout:           Duration{Duration: 2 * time.Second},
-		Target:            target,
+	schedule := config.ScheduleConfig{
+		Name:     "duplicate",
+		Cron:     "*/10 * * * *",
+		Timezone: "UTC",
+		Timeout:  config.Duration{Duration: 2 * time.Second},
+		Target:   target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
 		t.Fatal(err)
@@ -144,18 +152,18 @@ func TestRateScheduleNextUsesPersistedAnchor(t *testing.T) {
 
 func TestOneTimeScheduleMarksCompletedAfterScheduledTrigger(t *testing.T) {
 	target := testHTTPTarget(t)
-	store := NewMemoryStore()
+	store := store.NewMemoryStore()
 	runAt := localDateTimeString(time.Now().UTC().Add(time.Second))
-	cfg := Config{
-		Store: StoreConfig{Type: "memory"},
-		Schedules: []ScheduleConfig{
+	cfg := config.Config{
+		Store: config.StoreConfig{Type: "memory"},
+		Schedules: []config.ScheduleConfig{
 			{
-				Name:              "once",
-				ScheduleType:      "once",
-				RunAt:             runAt,
-				Timezone:          "UTC",
-				Timeout:           Duration{Duration: 2 * time.Second},
-				Target:            target,
+				Name:         "once",
+				ScheduleType: "once",
+				RunAt:        runAt,
+				Timezone:     "UTC",
+				Timeout:      config.Duration{Duration: 2 * time.Second},
+				Target:       target,
 			},
 		},
 	}
@@ -181,20 +189,20 @@ func TestOneTimeScheduleMarksCompletedAfterScheduledTrigger(t *testing.T) {
 
 func TestSaveSchedulePreservesCompletedOnceWhenRunAtUnchanged(t *testing.T) {
 	target := testHTTPTarget(t)
-	store := NewMemoryStore()
-	engine, err := NewEngine(Config{Store: StoreConfig{Type: "memory"}}, store, slog.Default())
+	store := store.NewMemoryStore()
+	engine, err := NewEngine(config.Config{Store: config.StoreConfig{Type: "memory"}}, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	completedAt := time.Now().UTC()
-	schedule := ScheduleConfig{
-		Name:              "once",
-		ScheduleType:      "once",
-		RunAt:             "2026-05-10T09:00",
-		Timezone:          "UTC",
-		CompletedAt:       &completedAt,
-		Timeout:           Duration{Duration: 2 * time.Second},
-		Target:            target,
+	schedule := config.ScheduleConfig{
+		Name:         "once",
+		ScheduleType: "once",
+		RunAt:        "2026-05-10T09:00",
+		Timezone:     "UTC",
+		CompletedAt:  &completedAt,
+		Timeout:      config.Duration{Duration: 2 * time.Second},
+		Target:       target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
 		t.Fatal(err)
@@ -212,20 +220,20 @@ func TestSaveSchedulePreservesCompletedOnceWhenRunAtUnchanged(t *testing.T) {
 
 func TestSaveScheduleClearsCompletedOnceWhenTimezoneChanges(t *testing.T) {
 	target := testHTTPTarget(t)
-	store := NewMemoryStore()
-	engine, err := NewEngine(Config{Store: StoreConfig{Type: "memory"}}, store, slog.Default())
+	store := store.NewMemoryStore()
+	engine, err := NewEngine(config.Config{Store: config.StoreConfig{Type: "memory"}}, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	completedAt := time.Now().UTC()
-	schedule := ScheduleConfig{
-		Name:              "once",
-		ScheduleType:      "once",
-		RunAt:             "2026-05-10T09:00",
-		Timezone:          "UTC",
-		CompletedAt:       &completedAt,
-		Timeout:           Duration{Duration: 2 * time.Second},
-		Target:            target,
+	schedule := config.ScheduleConfig{
+		Name:         "once",
+		ScheduleType: "once",
+		RunAt:        "2026-05-10T09:00",
+		Timezone:     "UTC",
+		CompletedAt:  &completedAt,
+		Timeout:      config.Duration{Duration: 2 * time.Second},
+		Target:       target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
 		t.Fatal(err)
@@ -243,19 +251,19 @@ func TestSaveScheduleClearsCompletedOnceWhenTimezoneChanges(t *testing.T) {
 
 func TestClearRunsKeepsSchedules(t *testing.T) {
 	target := testHTTPTarget(t)
-	cfg := Config{Store: StoreConfig{Type: "memory"}}
-	store := NewMemoryStore()
+	cfg := config.Config{Store: config.StoreConfig{Type: "memory"}}
+	store := store.NewMemoryStore()
 	engine, err := NewEngine(cfg, store, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	schedule := ScheduleConfig{
-		Name:              "clear-runs",
-		Cron:              "*/10 * * * *",
-		Timezone:          "UTC",
-		Timeout:           Duration{Duration: 2 * time.Second},
-		Target:            target,
+	schedule := config.ScheduleConfig{
+		Name:     "clear-runs",
+		Cron:     "*/10 * * * *",
+		Timezone: "UTC",
+		Timeout:  config.Duration{Duration: 2 * time.Second},
+		Target:   target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
 		t.Fatal(err)
@@ -270,7 +278,7 @@ func TestClearRunsKeepsSchedules(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(runs) > 0 && runs[0].Status == RunSucceeded {
+		if len(runs) > 0 && runs[0].Status == model.RunSucceeded {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

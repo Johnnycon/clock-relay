@@ -30,13 +30,12 @@ The app listens on `:9808` by default and serves both JSON APIs and a minimal se
 Important files:
 
 - `cmd/clock-relay/main.go`: CLI entrypoint, config loading, store setup, server lifecycle.
-- `relay/config.go`: YAML config, schedule/target structs, Faktory instance config, validation, defaults.
-- `relay/engine.go`: schedule registration, runtime job CRUD, manual triggers, run execution.
-- `relay/store.go`: store interface, memory store, bbolt store.
-- `relay/target.go`: HTTP target implementation.
-- `relay/target_faktory.go`: native Faktory enqueue target.
-- `relay/http.go`: API routes and embedded HTML/CSS/JS UI templates.
-- `relay/model.go`: run model/statuses.
+- `internal/config`: YAML config, schedule/target structs, Faktory instance config, validation, defaults.
+- `internal/model`: run model/statuses.
+- `internal/store`: store interface, memory store, bbolt store, retention pruning.
+- `internal/target`: HTTP and native Faktory target implementations.
+- `internal/engine`: schedule registration, runtime job CRUD, manual triggers, run execution.
+- `internal/server`: API routes and embedded HTML/CSS/JS UI templates.
 - `clock-relay.example.yaml`: local/dev config with no seed jobs.
 - `Dockerfile` and `compose.yaml`: containerized local run.
 - `.dockerignore`: keeps local metadata and generated state out of release build contexts.
@@ -130,7 +129,7 @@ schedules:
 
 Current scheduler implementation:
 
-- `github.com/netresearch/go-cron` is pinned in `go.mod` and used directly in `relay/engine.go`.
+- `github.com/netresearch/go-cron` is pinned in `go.mod` and used directly in `internal/engine`.
 - Cron parsing uses five-field cron plus descriptors. Use `cron.DowOrDom` so Clock Relay preserves normal/POSIX-style day-of-month OR day-of-week behavior rather than netresearch/go-cron's default AND behavior.
 - Schedule timezones are encoded into cron specs with `CRON_TZ=...`.
 - `rateSchedule` and `onceSchedule` implement the cron package's `Schedule` interface directly with `Next(time.Time) time.Time`; do not force these schedule types through generated cron specs.

@@ -1,4 +1,4 @@
-package relay
+package engine
 
 import (
 	"bytes"
@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/store"
 )
 
 func TestRunLoggingSummaryOmitsRawOutput(t *testing.T) {
@@ -66,33 +69,33 @@ func runLoggingEngine(t *testing.T, logs *bytes.Buffer, stdoutMode string, respo
 	t.Helper()
 	target := loggingHTTPTarget(t, responseBody)
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	engine, err := NewEngine(Config{
-		Store:      StoreConfig{Type: "memory"},
-		RunLogging: RunLoggingConfig{Stdout: stdoutMode},
-		Schedules: []ScheduleConfig{
+	engine, err := NewEngine(config.Config{
+		Store:      config.StoreConfig{Type: "memory"},
+		RunLogging: config.RunLoggingConfig{Stdout: stdoutMode},
+		Schedules: []config.ScheduleConfig{
 			{
 				Name:     "logging",
 				Cron:     "* * * * *",
 				Timezone: "UTC",
-				Timeout:  Duration{Duration: 2 * time.Second},
+				Timeout:  config.Duration{Duration: 2 * time.Second},
 				Target:   target,
 			},
 		},
-	}, NewMemoryStore(), logger)
+	}, store.NewMemoryStore(), logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return engine
 }
 
-func loggingHTTPTarget(t *testing.T, body string) TargetConfig {
+func loggingHTTPTarget(t *testing.T, body string) config.TargetConfig {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	return TargetConfig{Type: "http", URL: srv.URL, Method: "POST"}
+	return config.TargetConfig{Type: "http", URL: srv.URL, Method: "POST"}
 }
 
 func waitForRunLog(t *testing.T, logs *bytes.Buffer, pattern string) {

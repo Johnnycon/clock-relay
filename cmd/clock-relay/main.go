@@ -14,7 +14,10 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/johnnycon/clock-relay/relay"
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/engine"
+	"github.com/johnnycon/clock-relay/internal/server"
+	"github.com/johnnycon/clock-relay/internal/store"
 )
 
 var (
@@ -40,7 +43,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	cfg, err := relay.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		logger.Error("load config", "error", err)
 		os.Exit(1)
@@ -49,22 +52,22 @@ func main() {
 		cfg.Server.Addr = addr
 	}
 
-	store, err := openStore(cfg)
+	relayStore, err := openStore(cfg)
 	if err != nil {
 		logger.Error("open store", "error", err)
 		os.Exit(1)
 	}
-	defer store.Close()
+	defer relayStore.Close()
 
-	engine, err := relay.NewEngine(cfg, store, logger)
+	relayEngine, err := engine.NewEngine(cfg, relayStore, logger)
 	if err != nil {
 		logger.Error("create engine", "error", err)
 		os.Exit(1)
 	}
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           relay.NewHTTPServer(engine, logger),
+		Handler:           server.NewHTTPServer(relayEngine, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -74,15 +77,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := engine.Start(); err != nil {
+	if err := relayEngine.Start(); err != nil {
 		logger.Error("start scheduler", "error", err)
 		os.Exit(1)
 	}
-	defer engine.Stop()
+	defer relayEngine.Stop()
 
 	go func() {
 		logger.Info("clock-relay listening", "addr", cfg.Server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server", "error", err)
 			stop()
 		}
@@ -91,21 +94,21 @@ func main() {
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown server", "error", err)
 	}
 }
 
-func openStore(cfg relay.Config) (relay.Store, error) {
+func openStore(cfg config.Config) (store.Store, error) {
 	switch cfg.Store.Type {
 	case "", "bbolt":
 		if err := os.MkdirAll(filepath.Dir(cfg.Store.Path), 0o755); err != nil {
 			return nil, err
 		}
-		return relay.OpenBoltStore(cfg.Store.Path)
+		return store.OpenBoltStore(cfg.Store.Path)
 	case "memory":
-		return relay.NewMemoryStore(), nil
+		return store.NewMemoryStore(), nil
 	default:
-		return nil, relay.ConfigError("unsupported store type: " + cfg.Store.Type)
+		return nil, config.ConfigError("unsupported store type: " + cfg.Store.Type)
 	}
 }

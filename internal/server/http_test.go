@@ -1,4 +1,4 @@
-package relay
+package server
 
 import (
 	"io"
@@ -9,6 +9,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/johnnycon/clock-relay/internal/config"
+	enginepkg "github.com/johnnycon/clock-relay/internal/engine"
+	"github.com/johnnycon/clock-relay/internal/model"
+	"github.com/johnnycon/clock-relay/internal/store"
 )
 
 func TestScheduleFromRequestParsesFaktoryForm(t *testing.T) {
@@ -128,22 +133,22 @@ func TestScheduleFromRequestRejectsInvalidFaktoryArgs(t *testing.T) {
 }
 
 func TestFaktoryScheduleEditFormRenders(t *testing.T) {
-	cfg := Config{
-		Store: StoreConfig{Type: "memory"},
-		Faktory: []FaktoryInstance{
+	cfg := config.Config{
+		Store: config.StoreConfig{Type: "memory"},
+		Faktory: []config.FaktoryInstance{
 			{Name: "default", URL: "tcp://faktory:7419"},
 		},
 	}
-	engine, err := NewEngine(cfg, NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine, err := enginepkg.NewEngine(cfg, store.NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule := ScheduleConfig{
+	schedule := config.ScheduleConfig{
 		Name:     "faktory-smoke",
 		Cron:     "*/5 * * * *",
 		Timezone: "UTC",
-		Timeout:  Duration{Duration: 10 * time.Second},
-		Target: TargetConfig{
+		Timeout:  config.Duration{Duration: 10 * time.Second},
+		Target: config.TargetConfig{
 			Type:     "faktory",
 			Instance: "default",
 			Queue:    "default",
@@ -180,10 +185,10 @@ func TestFaktoryScheduleEditFormRenders(t *testing.T) {
 }
 
 func TestNewJobShowsTypePicker(t *testing.T) {
-	engine, err := NewEngine(Config{
-		Store:   StoreConfig{Type: "memory"},
-		Faktory: []FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
-	}, NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine, err := enginepkg.NewEngine(config.Config{
+		Store:   config.StoreConfig{Type: "memory"},
+		Faktory: []config.FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
+	}, store.NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,10 +214,10 @@ func TestNewJobShowsTypePicker(t *testing.T) {
 }
 
 func TestNewFaktoryJobFormRenders(t *testing.T) {
-	engine, err := NewEngine(Config{
-		Store:   StoreConfig{Type: "memory"},
-		Faktory: []FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
-	}, NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine, err := enginepkg.NewEngine(config.Config{
+		Store:   config.StoreConfig{Type: "memory"},
+		Faktory: []config.FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
+	}, store.NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +252,7 @@ func TestNewFaktoryJobFormRenders(t *testing.T) {
 }
 
 func TestIndexIncludesLiveRefresh(t *testing.T) {
-	engine, err := NewEngine(Config{Store: StoreConfig{Type: "memory"}}, NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine, err := enginepkg.NewEngine(config.Config{Store: config.StoreConfig{Type: "memory"}}, store.NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +280,7 @@ func TestIndexIncludesLiveRefresh(t *testing.T) {
 }
 
 func TestTimeHelperFormatsLocalDateTimeInSelectedTimezone(t *testing.T) {
-	engine, err := NewEngine(Config{Store: StoreConfig{Type: "memory"}}, NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine, err := enginepkg.NewEngine(config.Config{Store: config.StoreConfig{Type: "memory"}}, store.NewMemoryStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,23 +305,23 @@ func TestTimeHelperFormatsLocalDateTimeInSelectedTimezone(t *testing.T) {
 }
 
 func TestNewFormsDefaultDatetimesInPreferredTimezone(t *testing.T) {
-	schedule := ScheduleConfig{
+	schedule := config.ScheduleConfig{
 		Name:         "http-job",
 		ScheduleType: "rate",
 		StartsAt:     "2026-05-08T10:30",
 		Timezone:     "UTC",
 		RateInterval: 5,
 		RateUnit:     "minutes",
-		Timeout:      Duration{Duration: 10 * time.Second},
-		Target:       TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat", Method: "POST"},
+		Timeout:      config.Duration{Duration: 10 * time.Second},
+		Target:       config.TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat", Method: "POST"},
 	}
-	store := NewMemoryStore()
-	engine, err := NewEngine(Config{
-		Store: StoreConfig{Type: "memory"},
-		Schedules: []ScheduleConfig{
+	store := store.NewMemoryStore()
+	engine, err := enginepkg.NewEngine(config.Config{
+		Store: config.StoreConfig{Type: "memory"},
+		Schedules: []config.ScheduleConfig{
 			schedule,
 		},
-		Faktory: []FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
+		Faktory: []config.FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
 	}, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -380,7 +385,7 @@ func TestScheduleSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := string(scheduleSummary(ScheduleConfig{Cron: tt.cron}))
+			got := string(scheduleSummary(config.ScheduleConfig{Cron: tt.cron}))
 			if !strings.Contains(got, tt.contains) {
 				t.Fatalf("expected summary to contain %q, got %q", tt.contains, got)
 			}
@@ -388,7 +393,7 @@ func TestScheduleSummary(t *testing.T) {
 	}
 
 	t.Run("daily emits wall-time span", func(t *testing.T) {
-		got := string(scheduleSummary(ScheduleConfig{Cron: "30 9 * * *", Timezone: "UTC"}))
+		got := string(scheduleSummary(config.ScheduleConfig{Cron: "30 9 * * *", Timezone: "UTC"}))
 		if !strings.Contains(got, `class="wall-time"`) || !strings.Contains(got, `data-hour="9"`) || !strings.Contains(got, `data-minute="30"`) {
 			t.Fatalf("expected wall-time span for cron summary, got %q", got)
 		}
@@ -396,7 +401,7 @@ func TestScheduleSummary(t *testing.T) {
 }
 
 func TestScheduleDetailsAvoidsInternalTypeLabels(t *testing.T) {
-	got := string(scheduleDetails(ScheduleConfig{
+	got := string(scheduleDetails(config.ScheduleConfig{
 		ScheduleType: "rate",
 		StartsAt:     "2026-05-08T18:39",
 		Timezone:     "America/Chicago",
@@ -417,7 +422,7 @@ func TestScheduleDetailsAvoidsInternalTypeLabels(t *testing.T) {
 
 func TestNextRunLabel(t *testing.T) {
 	next := time.Date(2026, 5, 8, 12, 30, 0, 0, time.UTC)
-	got := string(nextRunLabel(ScheduleConfig{NextRun: next, Timezone: "America/Chicago"}))
+	got := string(nextRunLabel(config.ScheduleConfig{NextRun: next, Timezone: "America/Chicago"}))
 	if !strings.Contains(got, `data-time="2026-05-08T12:30:00Z"`) {
 		t.Fatalf("expected data-time attribute with UTC time, got %q", got)
 	}
@@ -426,11 +431,11 @@ func TestNextRunLabel(t *testing.T) {
 	}
 
 	completedAt := time.Now().UTC()
-	if got := string(nextRunLabel(ScheduleConfig{ScheduleType: "once", CompletedAt: &completedAt})); !strings.Contains(got, "completed") {
+	if got := string(nextRunLabel(config.ScheduleConfig{ScheduleType: "once", CompletedAt: &completedAt})); !strings.Contains(got, "completed") {
 		t.Fatalf("expected completed label, got %q", got)
 	}
 
-	if got := string(nextRunLabel(ScheduleConfig{ScheduleType: "once"})); !strings.Contains(got, "no upcoming run") {
+	if got := string(nextRunLabel(config.ScheduleConfig{ScheduleType: "once"})); !strings.Contains(got, "no upcoming run") {
 		t.Fatalf("expected no upcoming run label, got %q", got)
 	}
 }
@@ -438,8 +443,8 @@ func TestNextRunLabel(t *testing.T) {
 func TestRunViewsUseScheduleTimezone(t *testing.T) {
 	startedAt := time.Date(2026, 5, 8, 12, 30, 0, 0, time.UTC)
 	views := runViews(
-		[]Run{{ScheduleName: "daily-report", StartedAt: startedAt}},
-		[]ScheduleConfig{{Name: "daily-report", Timezone: "America/Chicago"}},
+		[]model.Run{{ScheduleName: "daily-report", StartedAt: startedAt}},
+		[]config.ScheduleConfig{{Name: "daily-report", Timezone: "America/Chicago"}},
 	)
 	if len(views) != 1 {
 		t.Fatalf("expected one run view, got %d", len(views))

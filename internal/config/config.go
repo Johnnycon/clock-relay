@@ -1,4 +1,4 @@
-package relay
+package config
 
 import (
 	"encoding/json"
@@ -96,7 +96,7 @@ func LoadConfig(path string) (Config, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, err
 	}
-	cfg.applyDefaults()
+	cfg.ApplyDefaults()
 	return cfg, cfg.Validate()
 }
 
@@ -120,7 +120,7 @@ func NormalizeSchedule(schedule *ScheduleConfig) {
 	schedule.PreviousRun = time.Time{}
 }
 
-func (c *Config) applyDefaults() {
+func (c *Config) ApplyDefaults() {
 	if c.Server.Addr == "" {
 		c.Server.Addr = ":9808"
 	}
@@ -145,10 +145,10 @@ func (c *Config) applyDefaults() {
 }
 
 func (c Config) Validate() error {
-	if err := validateRunRetention(c.RunRetention); err != nil {
+	if err := ValidateRunRetention(c.RunRetention); err != nil {
 		return err
 	}
-	if err := validateRunLogging(c.RunLogging); err != nil {
+	if err := ValidateRunLogging(c.RunLogging); err != nil {
 		return err
 	}
 
@@ -201,7 +201,7 @@ func (s ScheduleConfig) AllowsConcurrentRuns() bool {
 	return s.AllowConcurrent
 }
 
-func validateRunRetention(retention RunRetentionConfig) error {
+func ValidateRunRetention(retention RunRetentionConfig) error {
 	if retention.MaxRecords < 0 {
 		return ConfigError("run_retention.max_records must be non-negative")
 	}
@@ -211,7 +211,7 @@ func validateRunRetention(retention RunRetentionConfig) error {
 	return nil
 }
 
-func validateRunLogging(logging RunLoggingConfig) error {
+func ValidateRunLogging(logging RunLoggingConfig) error {
 	switch logging.Stdout {
 	case "", "off", "summary", "full":
 		return nil
@@ -245,14 +245,14 @@ func validateScheduleTiming(schedule ScheduleConfig) error {
 		if schedule.RunAt == "" {
 			return ConfigError("run_at is required for once schedule: " + schedule.Name)
 		}
-		if _, err := parseLocalDateTime(schedule.RunAt, schedule.Timezone); err != nil {
+		if _, err := ParseLocalDateTime(schedule.RunAt, schedule.Timezone); err != nil {
 			return fmt.Errorf("invalid run_at for schedule %s: %w", schedule.Name, err)
 		}
 	case "rate":
 		if schedule.StartsAt == "" {
 			return ConfigError("starts_at is required for rate schedule: " + schedule.Name)
 		}
-		if _, err := parseLocalDateTime(schedule.StartsAt, schedule.Timezone); err != nil {
+		if _, err := ParseLocalDateTime(schedule.StartsAt, schedule.Timezone); err != nil {
 			return fmt.Errorf("invalid starts_at for schedule %s: %w", schedule.Name, err)
 		}
 		if schedule.RateInterval <= 0 {
@@ -273,7 +273,7 @@ func validateScheduleTiming(schedule ScheduleConfig) error {
 	return nil
 }
 
-func parseLocalDateTime(raw string, timezone string) (time.Time, error) {
+func ParseLocalDateTime(raw string, timezone string) (time.Time, error) {
 	location, err := time.LoadLocation(timezone)
 	if err != nil {
 		return time.Time{}, err

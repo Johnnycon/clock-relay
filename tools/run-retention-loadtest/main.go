@@ -10,7 +10,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/johnnycon/clock-relay/relay"
+	"github.com/johnnycon/clock-relay/internal/config"
+	"github.com/johnnycon/clock-relay/internal/model"
+	storepkg "github.com/johnnycon/clock-relay/internal/store"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -70,21 +72,21 @@ func main() {
 	runtime.ReadMemStats(&before)
 
 	pruneStart := time.Now()
-	var result relay.RunRetentionResult
+	var result storepkg.RunRetentionResult
 	var err error
 	switch *mode {
 	case "indexed":
-		store, openErr := relay.OpenBoltStore(*dbPath)
+		store, openErr := storepkg.OpenBoltStore(*dbPath)
 		err = openErr
 		if err != nil {
 			fatal(err)
 		}
-		result, err = store.PruneRuns(relay.RunRetentionConfig{MaxRecords: retentionRecords, MaxAgeDays: *maxAgeDays}, time.Now().UTC())
+		result, err = store.PruneRuns(config.RunRetentionConfig{MaxRecords: retentionRecords, MaxAgeDays: *maxAgeDays}, time.Now().UTC())
 		if closeErr := store.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	case "scan-sort":
-		result, err = scanSortPrune(*dbPath, relay.RunRetentionConfig{MaxRecords: retentionRecords, MaxAgeDays: *maxAgeDays}, time.Now().UTC())
+		result, err = scanSortPrune(*dbPath, config.RunRetentionConfig{MaxRecords: retentionRecords, MaxAgeDays: *maxAgeDays}, time.Now().UTC())
 	default:
 		err = fmt.Errorf("unsupported mode %q", *mode)
 	}
@@ -137,12 +139,12 @@ func insertRuns(path string, start int, count int, base time.Time, payloadBytes 
 				n := start + inserted + i
 				startedAt := base.Add(time.Duration(n) * time.Second)
 				finishedAt := startedAt.Add(time.Second)
-				run := relay.Run{
+				run := model.Run{
 					ID:           fmt.Sprintf("load-%012d", n),
 					ScheduleName: "load-test",
 					TargetType:   "http",
 					TriggeredBy:  "scheduler",
-					Status:       relay.RunSucceeded,
+					Status:       model.RunSucceeded,
 					ScheduledAt:  startedAt,
 					StartedAt:    startedAt,
 					FinishedAt:   &finishedAt,
@@ -186,7 +188,7 @@ func ensureLoadTestBuckets(tx *bolt.Tx) error {
 	return nil
 }
 
-func runStartedAtIndexKey(run relay.Run) []byte {
+func runStartedAtIndexKey(run model.Run) []byte {
 	return []byte(run.StartedAt.UTC().Format(runStartedAtIndexTimeLayout) + "|" + run.ID)
 }
 
@@ -209,22 +211,22 @@ func setCompletedRunCount(tx *bolt.Tx, count int) error {
 
 type storedRun struct {
 	id  string
-	run relay.Run
+	run model.Run
 }
 
-func scanSortPrune(path string, retention relay.RunRetentionConfig, now time.Time) (relay.RunRetentionResult, error) {
+func scanSortPrune(path string, retention config.RunRetentionConfig, now time.Time) (storepkg.RunRetentionResult, error) {
 	db, err := bolt.Open(path, 0o600, nil)
 	if err != nil {
-		return relay.RunRetentionResult{}, err
+		return storepkg.RunRetentionResult{}, err
 	}
 	defer db.Close()
 
-	var result relay.RunRetentionResult
+	var result storepkg.RunRetentionResult
 	err = db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(runsBucket)
 		runs := []storedRun{}
 		if err := bucket.ForEach(func(key, value []byte) error {
-			var run relay.Run
+			var run model.Run
 			if err := json.Unmarshal(value, &run); err != nil {
 				return err
 			}
@@ -242,7 +244,7 @@ func scanSortPrune(path string, retention relay.RunRetentionConfig, now time.Tim
 		if retention.MaxAgeDays > 0 {
 			cutoff := now.AddDate(0, 0, -retention.MaxAgeDays)
 			for _, run := range runs {
-				if run.run.Status != relay.RunRunning && run.run.StartedAt.Before(cutoff) {
+				if run.run.Status != model.RunRunning && run.run.StartedAt.Before(cutoff) {
 					victims[run.id] = struct{}{}
 				}
 			}
@@ -250,13 +252,13 @@ func scanSortPrune(path string, retention relay.RunRetentionConfig, now time.Tim
 		if retention.MaxRecords > 0 {
 			kept := 0
 			for _, run := range runs {
-				if _, deleted := victims[run.id]; !deleted && run.run.Status != relay.RunRunning {
+				if _, deleted := victims[run.id]; !deleted && run.run.Status != model.RunRunning {
 					kept++
 				}
 			}
 			for i := len(runs) - 1; kept > retention.MaxRecords && i >= 0; i-- {
 				run := runs[i]
-				if run.run.Status == relay.RunRunning {
+				if run.run.Status == model.RunRunning {
 					continue
 				}
 				if _, deleted := victims[run.id]; deleted {
@@ -284,7 +286,7 @@ func completedCount(runs []storedRun, victims map[string]struct{}) int {
 		if _, deleted := victims[run.id]; deleted {
 			continue
 		}
-		if run.run.Status != relay.RunRunning {
+		if run.run.Status != model.RunRunning {
 			count++
 		}
 	}
