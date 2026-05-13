@@ -29,7 +29,6 @@ func TestManualTriggerRecordsRun(t *testing.T) {
 				Cron:              "* * * * *",
 				Timezone:          "UTC",
 				Timeout:           Duration{Duration: 2 * time.Second},
-				ConcurrencyPolicy: "allow",
 				Target:            target,
 			},
 		},
@@ -76,7 +75,6 @@ func TestSaveAndDeleteSchedule(t *testing.T) {
 		Cron:              "*/10 * * * *",
 		Timezone:          "UTC",
 		Timeout:           Duration{Duration: 2 * time.Second},
-		ConcurrencyPolicy: "forbid",
 		Target:            target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
@@ -119,7 +117,6 @@ func TestSaveScheduleRejectsDuplicateCreate(t *testing.T) {
 		Cron:              "*/10 * * * *",
 		Timezone:          "UTC",
 		Timeout:           Duration{Duration: 2 * time.Second},
-		ConcurrencyPolicy: "forbid",
 		Target:            target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
@@ -158,7 +155,6 @@ func TestOneTimeScheduleMarksCompletedAfterScheduledTrigger(t *testing.T) {
 				RunAt:             runAt,
 				Timezone:          "UTC",
 				Timeout:           Duration{Duration: 2 * time.Second},
-				ConcurrencyPolicy: "forbid",
 				Target:            target,
 			},
 		},
@@ -198,7 +194,6 @@ func TestSaveSchedulePreservesCompletedOnceWhenRunAtUnchanged(t *testing.T) {
 		Timezone:          "UTC",
 		CompletedAt:       &completedAt,
 		Timeout:           Duration{Duration: 2 * time.Second},
-		ConcurrencyPolicy: "forbid",
 		Target:            target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
@@ -230,7 +225,6 @@ func TestSaveScheduleClearsCompletedOnceWhenTimezoneChanges(t *testing.T) {
 		Timezone:          "UTC",
 		CompletedAt:       &completedAt,
 		Timeout:           Duration{Duration: 2 * time.Second},
-		ConcurrencyPolicy: "forbid",
 		Target:            target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {
@@ -261,7 +255,6 @@ func TestClearRunsKeepsSchedules(t *testing.T) {
 		Cron:              "*/10 * * * *",
 		Timezone:          "UTC",
 		Timeout:           Duration{Duration: 2 * time.Second},
-		ConcurrencyPolicy: "allow",
 		Target:            target,
 	}
 	if err := engine.SaveSchedule("", schedule); err != nil {

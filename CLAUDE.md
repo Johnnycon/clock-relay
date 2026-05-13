@@ -56,6 +56,9 @@ Current implementation status:
 - The index page lightly polls and replaces the Jobs and Run Log sections every few seconds while visible.
 - Timestamps are formatted client-side with a saved "My timezone" setting and an Auto/12-hour/24-hour format selector.
 - Run results are stored only in `structured_output`.
+- Process logs are written to stdout/stderr through Go `slog`; Clock Relay does not create its own application log file.
+- Run lifecycle stdout events are controlled by `run_logging.stdout`: `summary` by default, `off` to disable, or `full` to include complete `structured_output`. `full` may emit sensitive or large raw target output.
+- Persisted run history is bounded by `run_retention` using max records and max age in days. Completed runs are pruned on startup and periodically after finalized runs; running runs are preserved.
 - Faktory can be exercised against a real server and runner through `examples/faktory`.
 - River has not been implemented yet, but it is expected to be a key native-provider integration.
 
@@ -75,6 +78,8 @@ The bbolt store has separate buckets for:
 On first boot, if the store has no schedules, Clock Relay can seed schedules from YAML config. The bundled local configs intentionally start empty, so a fresh UI has no jobs. After UI/API edits are persisted in bbolt, bbolt becomes the source of truth.
 
 There is also an in-memory store for tests and ephemeral development.
+
+Jobs are intentionally unbounded. Run history should not be unbounded: the config defaults to keeping at most 10,000 completed run records and 30 days of completed history. The bbolt store maintains run indexes for retention, recent-run reads, and running-run checks, and deletes old records from the `runs` bucket. bbolt may not immediately shrink the database file on disk after deletion; strict physical compaction would need a separate maintenance step. Clearing the run log deletes all run records.
 
 Redis is still a likely future production store, especially when adding multiple Clock Relay replicas, leases, shared state, or stronger production deployment guidance.
 
@@ -336,6 +341,7 @@ docker compose up --build
 ```
 
 The compose setup persists `/app/data` in a Docker volume.
+The app logs to stdout/stderr and does not create its own application log file. Keep future process logging container-native unless there is a deliberate operational reason to add a file sink.
 
 ## Container Releases
 
@@ -372,7 +378,7 @@ Keep the v0 focused: Clock Relay is a scheduler and trigger layer, not a full qu
 
 Known technical debt to keep in mind before production hardening:
 
-- `concurrency_policy: forbid` is currently a best-effort check. The check for an existing running run and the creation of the next run are separate store calls, so concurrent triggers can race. This should become an atomic store-level claim operation when the run model settles.
+- `allow_concurrent_runs: false` is currently a best-effort check. The check for an existing running run and the creation of the next run are separate store calls, so concurrent triggers can race. This should become an atomic store-level claim operation when the run model settles.
 - Run execution currently uses background goroutines owned by the engine. A future engine lifecycle pass should add cancellable run contexts and wait for active runs during shutdown.
 - Clearing the run log is primarily a testing/development affordance. If a run is in flight, it may write a final run record after clearing. That is acceptable for now.
 - Native target clients are currently simple and opened per trigger where appropriate. Revisit client lifecycle/pooling when real provider usage creates pressure for it.
@@ -386,7 +392,6 @@ Likely next steps:
 - Revisit target abstraction and client lifecycle after the UI and run model expose more pressure.
 - Add River as the next native provider with a real example runner/project.
 - Add Redis store behind the existing `Store` interface.
-- Add retention policy for run logs.
 - Job pause/resume is implemented. Consider whether a separate "disabled" state is needed beyond pause.
 - Add retries/backoff for failed triggers.
 - Add richer run detail pages.

@@ -17,6 +17,7 @@ The first prototype supports:
 - A minimal web UI with a job list, run log, and dedicated add/edit screens.
 - Lightweight live refresh for the job list and run log.
 - Run log clearing from the UI or API.
+- Configurable run log retention by record count and age.
 - JSON APIs for health, schedules, and runs.
 
 ## Quick Start
@@ -41,7 +42,7 @@ For local development:
 docker compose up --build
 ```
 
-The compose file mounts `clock-relay-data` at `/app/data` so schedules and run history survive container restarts.
+The compose file mounts `clock-relay-data` at `/app/data` so schedules and run history survive container restarts. The app writes process logs to stdout/stderr and does not create its own application log file.
 
 Published release images are built by GitHub Actions and pushed to the GitHub Container Registry:
 
@@ -130,7 +131,7 @@ schedules:
     rate_interval: 1
     rate_unit: minutes
     timeout: 10s
-    concurrency_policy: forbid
+    allow_concurrent_runs: false
     target:
       type: http
       url: http://host.docker.internal:3000/internal/heartbeat
@@ -195,6 +196,29 @@ Faktory stores the enqueue details as structured fields and also includes `raw` 
   }
 }
 ```
+
+## Run Retention
+
+Jobs are persisted without a built-in count limit, but run history is bounded by `run_retention`:
+
+```yaml
+run_retention:
+  max_records: 10000
+  max_age_days: 30
+```
+
+Clock Relay prunes completed run records on startup and then periodically after finalized runs. Running records are preserved and may temporarily exceed the configured limits. The bbolt store maintains run indexes so routine pruning, recent-run reads, and running-run checks do not need to scan the full run history. Deleting records bounds active run data, but bbolt does not guarantee the database file immediately shrinks on disk. Clearing the run log deletes all run records.
+
+## Run Logging
+
+Clock Relay writes process logs to stdout/stderr. Completed and skipped runs are also emitted as structured stdout events by default:
+
+```yaml
+run_logging:
+  stdout: summary
+```
+
+Supported values are `off`, `summary`, and `full`. `summary` includes run identity, status, timing, errors, and safe provider metadata such as HTTP status codes or Faktory JIDs. `full` also includes the complete `structured_output`, including raw HTTP response bodies; use it only when your deployment intentionally ships that potentially sensitive or large data to external logs.
 
 ## API
 

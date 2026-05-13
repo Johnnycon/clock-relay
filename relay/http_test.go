@@ -17,7 +17,7 @@ func TestScheduleFromRequestParsesFaktoryForm(t *testing.T) {
 		"cron":                    {"*/5 * * * *"},
 		"timezone":                {"UTC"},
 		"timeout":                 {"10s"},
-		"concurrency_policy":      {"forbid"},
+		"allow_concurrent_runs":   {"false"},
 		"target_type":             {"faktory"},
 		"target_faktory_instance": {"default"},
 		"target_faktory_queue":    {"critical"},
@@ -54,17 +54,17 @@ func TestScheduleFromRequestParsesFaktoryForm(t *testing.T) {
 
 func TestScheduleFromRequestParsesRateForm(t *testing.T) {
 	form := url.Values{
-		"name":               {"heartbeat"},
-		"schedule_type":      {"rate"},
-		"starts_at":          {"2026-05-08T10:30"},
-		"timezone":           {"America/Chicago"},
-		"rate_interval":      {"15"},
-		"rate_unit":          {"minutes"},
-		"timeout":            {"10s"},
-		"concurrency_policy": {"forbid"},
-		"target_type":        {"http"},
-		"target_url":         {"http://localhost:3000/heartbeat"},
-		"target_method":      {"POST"},
+		"name":                  {"heartbeat"},
+		"schedule_type":         {"rate"},
+		"starts_at":             {"2026-05-08T10:30"},
+		"timezone":              {"America/Chicago"},
+		"rate_interval":         {"15"},
+		"rate_unit":             {"minutes"},
+		"timeout":               {"10s"},
+		"allow_concurrent_runs": {"true"},
+		"target_type":           {"http"},
+		"target_url":            {"http://localhost:3000/heartbeat"},
+		"target_method":         {"POST"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/schedules", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -79,19 +79,22 @@ func TestScheduleFromRequestParsesRateForm(t *testing.T) {
 	if schedule.StartsAt != "2026-05-08T10:30" || schedule.RateInterval != 15 || schedule.RateUnit != "minutes" {
 		t.Fatalf("unexpected rate fields: %#v", schedule)
 	}
+	if !schedule.AllowsConcurrentRuns() {
+		t.Fatal("expected allow_concurrent_runs form value to be parsed")
+	}
 }
 
 func TestScheduleFromRequestParsesOnceForm(t *testing.T) {
 	form := url.Values{
-		"name":               {"maintenance"},
-		"schedule_type":      {"once"},
-		"run_at":             {"2026-05-10T09:00"},
-		"timezone":           {"America/Chicago"},
-		"timeout":            {"10s"},
-		"concurrency_policy": {"forbid"},
-		"target_type":        {"http"},
-		"target_url":         {"http://localhost:3000/maintenance"},
-		"target_method":      {"POST"},
+		"name":                  {"maintenance"},
+		"schedule_type":         {"once"},
+		"run_at":                {"2026-05-10T09:00"},
+		"timezone":              {"America/Chicago"},
+		"timeout":               {"10s"},
+		"allow_concurrent_runs": {"false"},
+		"target_type":           {"http"},
+		"target_url":            {"http://localhost:3000/maintenance"},
+		"target_method":         {"POST"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/schedules", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -111,7 +114,7 @@ func TestScheduleFromRequestRejectsInvalidFaktoryArgs(t *testing.T) {
 		"cron":                    {"*/5 * * * *"},
 		"timezone":                {"UTC"},
 		"timeout":                 {"10s"},
-		"concurrency_policy":      {"forbid"},
+		"allow_concurrent_runs":   {"false"},
 		"target_type":             {"faktory"},
 		"target_faktory_job_type": {"smoke_job"},
 		"target_faktory_args":     {`{"account_id":"acct_123"}`},
@@ -136,11 +139,10 @@ func TestFaktoryScheduleEditFormRenders(t *testing.T) {
 		t.Fatal(err)
 	}
 	schedule := ScheduleConfig{
-		Name:              "faktory-smoke",
-		Cron:              "*/5 * * * *",
-		Timezone:          "UTC",
-		Timeout:           Duration{Duration: 10 * time.Second},
-		ConcurrencyPolicy: "forbid",
+		Name:     "faktory-smoke",
+		Cron:     "*/5 * * * *",
+		Timezone: "UTC",
+		Timeout:  Duration{Duration: 10 * time.Second},
 		Target: TargetConfig{
 			Type:     "faktory",
 			Instance: "default",
@@ -299,15 +301,14 @@ func TestTimeHelperFormatsLocalDateTimeInSelectedTimezone(t *testing.T) {
 
 func TestNewFormsDefaultDatetimesInPreferredTimezone(t *testing.T) {
 	schedule := ScheduleConfig{
-		Name:              "http-job",
-		ScheduleType:      "rate",
-		StartsAt:          "2026-05-08T10:30",
-		Timezone:          "UTC",
-		RateInterval:      5,
-		RateUnit:          "minutes",
-		Timeout:           Duration{Duration: 10 * time.Second},
-		ConcurrencyPolicy: "forbid",
-		Target:            TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat", Method: "POST"},
+		Name:         "http-job",
+		ScheduleType: "rate",
+		StartsAt:     "2026-05-08T10:30",
+		Timezone:     "UTC",
+		RateInterval: 5,
+		RateUnit:     "minutes",
+		Timeout:      Duration{Duration: 10 * time.Second},
+		Target:       TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat", Method: "POST"},
 	}
 	store := NewMemoryStore()
 	engine, err := NewEngine(Config{
@@ -396,10 +397,9 @@ func TestScheduleSummary(t *testing.T) {
 
 func TestScheduleDetailsAvoidsInternalTypeLabels(t *testing.T) {
 	got := string(scheduleDetails(ScheduleConfig{
-		ScheduleType:      "rate",
-		StartsAt:          "2026-05-08T18:39",
-		Timezone:          "America/Chicago",
-		ConcurrencyPolicy: "forbid",
+		ScheduleType: "rate",
+		StartsAt:     "2026-05-08T18:39",
+		Timezone:     "America/Chicago",
 	}))
 	if !strings.Contains(got, "Starts") || !strings.Contains(got, "No overlap") {
 		t.Fatalf("expected starts and concurrency info, got %q", got)

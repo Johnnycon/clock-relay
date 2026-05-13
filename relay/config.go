@@ -13,10 +13,12 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig      `yaml:"server" json:"server"`
-	Store     StoreConfig       `yaml:"store" json:"store"`
-	Faktory   []FaktoryInstance `yaml:"faktory,omitempty" json:"-"`
-	Schedules []ScheduleConfig  `yaml:"schedules" json:"schedules"`
+	Server       ServerConfig       `yaml:"server" json:"server"`
+	Store        StoreConfig        `yaml:"store" json:"store"`
+	RunRetention RunRetentionConfig `yaml:"run_retention" json:"run_retention"`
+	RunLogging   RunLoggingConfig   `yaml:"run_logging" json:"run_logging"`
+	Faktory      []FaktoryInstance  `yaml:"faktory,omitempty" json:"-"`
+	Schedules    []ScheduleConfig   `yaml:"schedules" json:"schedules"`
 }
 
 type FaktoryInstance struct {
@@ -34,23 +36,32 @@ type StoreConfig struct {
 	Path string `yaml:"path" json:"path"`
 }
 
+type RunRetentionConfig struct {
+	MaxRecords int `yaml:"max_records" json:"max_records"`
+	MaxAgeDays int `yaml:"max_age_days" json:"max_age_days"`
+}
+
+type RunLoggingConfig struct {
+	Stdout string `yaml:"stdout" json:"stdout"`
+}
+
 type ScheduleConfig struct {
-	Name              string       `yaml:"name" json:"name"`
-	Description       string       `yaml:"description" json:"description"`
-	ScheduleType      string       `yaml:"schedule_type" json:"schedule_type"`
-	Cron              string       `yaml:"cron" json:"cron"`
-	Timezone          string       `yaml:"timezone" json:"timezone"`
-	RunAt             string       `yaml:"run_at,omitempty" json:"run_at,omitempty"`
-	StartsAt          string       `yaml:"starts_at,omitempty" json:"starts_at,omitempty"`
-	RateInterval      int          `yaml:"rate_interval,omitempty" json:"rate_interval,omitempty"`
-	RateUnit          string       `yaml:"rate_unit,omitempty" json:"rate_unit,omitempty"`
-	CompletedAt       *time.Time   `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
-	Paused            bool         `yaml:"paused,omitempty" json:"paused,omitempty"`
-	Timeout           Duration     `yaml:"timeout" json:"timeout"`
-	ConcurrencyPolicy string       `yaml:"concurrency_policy" json:"concurrency_policy"`
-	Target            TargetConfig `yaml:"target" json:"target"`
-	NextRun           time.Time    `yaml:"-" json:"next_run,omitzero"`
-	PreviousRun       time.Time    `yaml:"-" json:"previous_run,omitzero"`
+	Name            string       `yaml:"name" json:"name"`
+	Description     string       `yaml:"description" json:"description"`
+	ScheduleType    string       `yaml:"schedule_type" json:"schedule_type"`
+	Cron            string       `yaml:"cron" json:"cron"`
+	Timezone        string       `yaml:"timezone" json:"timezone"`
+	RunAt           string       `yaml:"run_at,omitempty" json:"run_at,omitempty"`
+	StartsAt        string       `yaml:"starts_at,omitempty" json:"starts_at,omitempty"`
+	RateInterval    int          `yaml:"rate_interval,omitempty" json:"rate_interval,omitempty"`
+	RateUnit        string       `yaml:"rate_unit,omitempty" json:"rate_unit,omitempty"`
+	CompletedAt     *time.Time   `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+	Paused          bool         `yaml:"paused,omitempty" json:"paused,omitempty"`
+	Timeout         Duration     `yaml:"timeout" json:"timeout"`
+	AllowConcurrent bool         `yaml:"allow_concurrent_runs,omitempty" json:"allow_concurrent_runs,omitempty"`
+	Target          TargetConfig `yaml:"target" json:"target"`
+	NextRun         time.Time    `yaml:"-" json:"next_run,omitzero"`
+	PreviousRun     time.Time    `yaml:"-" json:"previous_run,omitzero"`
 }
 
 type TargetConfig struct {
@@ -99,9 +110,6 @@ func NormalizeSchedule(schedule *ScheduleConfig) {
 	if schedule.Timeout.Duration == 0 {
 		schedule.Timeout.Duration = 30 * time.Second
 	}
-	if schedule.ConcurrencyPolicy == "" {
-		schedule.ConcurrencyPolicy = "forbid"
-	}
 	if schedule.Target.Method == "" {
 		schedule.Target.Method = "POST"
 	}
@@ -122,12 +130,28 @@ func (c *Config) applyDefaults() {
 	if c.Store.Path == "" {
 		c.Store.Path = "./data/clock-relay.db"
 	}
+	if c.RunRetention.MaxRecords == 0 {
+		c.RunRetention.MaxRecords = 10_000
+	}
+	if c.RunRetention.MaxAgeDays == 0 {
+		c.RunRetention.MaxAgeDays = 30
+	}
+	if c.RunLogging.Stdout == "" {
+		c.RunLogging.Stdout = "summary"
+	}
 	for i := range c.Schedules {
 		NormalizeSchedule(&c.Schedules[i])
 	}
 }
 
 func (c Config) Validate() error {
+	if err := validateRunRetention(c.RunRetention); err != nil {
+		return err
+	}
+	if err := validateRunLogging(c.RunLogging); err != nil {
+		return err
+	}
+
 	seenInstances := map[string]struct{}{}
 	for _, inst := range c.Faktory {
 		if inst.Name == "" {
@@ -161,11 +185,6 @@ func (c Config) Validate() error {
 		if err := validateScheduleTiming(schedule); err != nil {
 			return err
 		}
-		switch schedule.ConcurrencyPolicy {
-		case "allow", "forbid":
-		default:
-			return ConfigError("unsupported concurrency_policy for schedule " + schedule.Name + ": " + schedule.ConcurrencyPolicy)
-		}
 		if err := schedule.Target.Validate(schedule.Name); err != nil {
 			return err
 		}
@@ -176,6 +195,29 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (s ScheduleConfig) AllowsConcurrentRuns() bool {
+	return s.AllowConcurrent
+}
+
+func validateRunRetention(retention RunRetentionConfig) error {
+	if retention.MaxRecords < 0 {
+		return ConfigError("run_retention.max_records must be non-negative")
+	}
+	if retention.MaxAgeDays < 0 {
+		return ConfigError("run_retention.max_age_days must be non-negative")
+	}
+	return nil
+}
+
+func validateRunLogging(logging RunLoggingConfig) error {
+	switch logging.Stdout {
+	case "", "off", "summary", "full":
+		return nil
+	default:
+		return ConfigError("run_logging.stdout must be off, summary, or full")
+	}
 }
 
 func (c Config) FaktoryInstanceNames() []string {
