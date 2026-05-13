@@ -345,7 +345,7 @@ Release images are published to the GitHub Container Registry:
 ghcr.io/johnnycon/clock-relay:<version>
 ```
 
-Use exact version tags from downstream Docker Compose or Swarm projects, for example `ghcr.io/johnnycon/clock-relay:0.0.1`. Do not rely on `latest`.
+Use exact version tags from downstream Docker Compose, Docker Swarm, Kamal, or other deployment projects, for example `ghcr.io/johnnycon/clock-relay:0.0.1`. The `latest` tag exists for quick local trials, but do not rely on it for repeatable deploys or rollbackable infrastructure.
 
 Version tags are created from git tags with a leading `v`:
 
@@ -354,7 +354,24 @@ git tag v0.0.1
 git push origin v0.0.1
 ```
 
-The GitHub Actions container workflow tests the repo, builds `linux/amd64` and `linux/arm64` images, and only pushes on tags matching `v*.*.*`. Pull requests and `main` pushes build without publishing.
+The container image tag drops the leading `v`, so `v0.0.1` publishes `ghcr.io/johnnycon/clock-relay:0.0.1`.
+
+The canonical discovery surfaces are:
+
+- README container section
+- GitHub Releases: https://github.com/Johnnycon/clock-relay/releases
+- GHCR package: https://github.com/Johnnycon/clock-relay/pkgs/container/clock-relay
+- Git tags: https://github.com/Johnnycon/clock-relay/tags
+
+For agents and automation, derive the pinned image from the newest semantic version tag:
+
+```sh
+latest_tag="$(git ls-remote --tags --refs --sort='v:refname' https://github.com/Johnnycon/clock-relay.git 'v*.*.*' | awk -F/ 'END {print $NF}')"
+image="ghcr.io/johnnycon/clock-relay:${latest_tag#v}"
+printf '%s\n' "$image"
+```
+
+The GitHub Actions container workflow tests the repo, builds `linux/amd64` and `linux/arm64` images, pushes on tags matching `v*.*.*`, and creates or updates the matching GitHub Release with the exact pull command. Pull requests and `main` pushes build without publishing.
 
 Downstream Docker hosts can pull the image directly. For Swarm, deploy with `docker stack deploy -c compose.yaml clock-relay`.
 

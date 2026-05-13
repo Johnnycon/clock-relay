@@ -33,7 +33,7 @@ Run tests with:
 go test ./...
 ```
 
-## Docker
+## Container Image
 
 For local development:
 
@@ -43,13 +43,19 @@ docker compose up --build
 
 The compose file mounts `clock-relay-data` at `/app/data` so schedules and run history survive container restarts.
 
-Published release images are built by GitHub Actions and pushed to the GitHub Container Registry:
+Published release images are built by GitHub Actions and pushed to GitHub Container Registry:
 
 ```text
 ghcr.io/johnnycon/clock-relay:<version>
 ```
 
-Use exact version tags from downstream projects:
+Install a pinned release image. See GitHub Releases for the current version:
+
+```sh
+docker pull ghcr.io/johnnycon/clock-relay:0.0.1
+```
+
+Use exact version tags for Docker Compose, Docker Swarm, Kamal, and other downstream deploys:
 
 ```yaml
 services:
@@ -84,7 +90,15 @@ volumes:
   clock-relay-data:
 ```
 
-Release images are published from version tags. To publish `0.0.1`:
+For quick local trials, `latest` points at the newest published release:
+
+```sh
+docker pull ghcr.io/johnnycon/clock-relay:latest
+```
+
+Do not use `latest` in deployment config where repeatable rollbacks matter.
+
+Release images are published from git tags. A git tag with a leading `v` publishes a container tag without the `v`. For example, to publish `0.0.1`:
 
 ```sh
 git tag v0.0.1
@@ -97,6 +111,20 @@ Release builds embed their version metadata:
 
 ```sh
 docker run --rm ghcr.io/johnnycon/clock-relay:0.0.1 clock-relay --version
+```
+
+Discovery links:
+
+- Container package: https://github.com/Johnnycon/clock-relay/pkgs/container/clock-relay
+- Release tags: https://github.com/Johnnycon/clock-relay/tags
+- GitHub releases: https://github.com/Johnnycon/clock-relay/releases
+
+For agents and automation, derive the pinned image from the newest semantic version tag:
+
+```sh
+latest_tag="$(git ls-remote --tags --refs --sort='v:refname' https://github.com/Johnnycon/clock-relay.git 'v*.*.*' | awk -F/ 'END {print $NF}')"
+image="ghcr.io/johnnycon/clock-relay:${latest_tag#v}"
+printf '%s\n' "$image"
 ```
 
 ## License

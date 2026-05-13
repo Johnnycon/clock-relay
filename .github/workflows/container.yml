@@ -11,7 +11,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -77,3 +77,40 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.build-date.outputs.date }}
+
+      - name: Create or update GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+          IMAGE: ghcr.io/johnnycon/clock-relay
+        run: |
+          image_tag="${VERSION#v}"
+          git fetch --force --depth=1 origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          release_changes="$(git tag -l --format='%(contents)' "$VERSION")"
+          notes="$(cat <<EOF
+          Container image:
+
+          \`\`\`sh
+          docker pull ${IMAGE}:${image_tag}
+          \`\`\`
+
+          Quick local trial:
+
+          \`\`\`sh
+          docker pull ${IMAGE}:latest
+          \`\`\`
+
+          Use the exact version tag \`${IMAGE}:${image_tag}\` for repeatable deployments. The \`latest\` tag points at the newest published release.
+
+          Package: https://github.com/Johnnycon/clock-relay/pkgs/container/clock-relay
+
+          ${release_changes}
+          EOF
+          )"
+
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "Clock Relay $VERSION" --notes "$notes"
+          else
+            gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --title "Clock Relay $VERSION" --notes "$notes"
+          fi
