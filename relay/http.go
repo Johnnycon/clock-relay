@@ -40,6 +40,9 @@ func NewHTTPServer(engine *Engine, logger *slog.Logger) http.Handler {
 			"nextRunLabel":    nextRunLabel,
 			"displayTime":     displayTime,
 			"displayRunTime":  displayRunTime,
+			"allowConcurrent": func(schedule ScheduleConfig) bool {
+				return schedule.AllowsConcurrentRuns()
+			},
 			"uiEditableTarget": func(targetType string) bool {
 				return targetType == "http" || targetType == "faktory"
 			},
@@ -122,14 +125,14 @@ func (s *HTTPServer) newSchedule(w http.ResponseWriter, r *http.Request) {
 	case "faktory":
 		instances := s.engine.FaktoryInstanceNames()
 		schedule := ScheduleConfig{
-			ScheduleType:      "rate",
-			Cron:              "*/5 * * * *",
-			Timezone:          "UTC",
-			RateInterval:      5,
-			RateUnit:          "minutes",
-			Timeout:           Duration{Duration: 5 * time.Second},
-			ConcurrencyPolicy: "allow",
-			Target:            TargetConfig{Type: "faktory"},
+			ScheduleType:    "rate",
+			Cron:            "*/5 * * * *",
+			Timezone:        "UTC",
+			RateInterval:    5,
+			RateUnit:        "minutes",
+			Timeout:         Duration{Duration: 5 * time.Second},
+			AllowConcurrent: true,
+			Target:          TargetConfig{Type: "faktory"},
 		}
 		if len(instances) == 1 {
 			schedule.Target.Instance = instances[0]
@@ -414,19 +417,24 @@ func scheduleFromRequest(r *http.Request) (ScheduleConfig, string, error) {
 		rateInterval = parsed
 	}
 	return ScheduleConfig{
-		Name:              strings.TrimSpace(r.FormValue("name")),
-		Description:       strings.TrimSpace(r.FormValue("description")),
-		ScheduleType:      strings.TrimSpace(r.FormValue("schedule_type")),
-		Cron:              strings.TrimSpace(r.FormValue("cron")),
-		Timezone:          strings.TrimSpace(r.FormValue("timezone")),
-		RunAt:             strings.TrimSpace(r.FormValue("run_at")),
-		StartsAt:          strings.TrimSpace(r.FormValue("starts_at")),
-		RateInterval:      rateInterval,
-		RateUnit:          strings.TrimSpace(r.FormValue("rate_unit")),
-		Timeout:           timeout,
-		ConcurrencyPolicy: strings.TrimSpace(r.FormValue("concurrency_policy")),
-		Target:            target,
+		Name:            strings.TrimSpace(r.FormValue("name")),
+		Description:     strings.TrimSpace(r.FormValue("description")),
+		ScheduleType:    strings.TrimSpace(r.FormValue("schedule_type")),
+		Cron:            strings.TrimSpace(r.FormValue("cron")),
+		Timezone:        strings.TrimSpace(r.FormValue("timezone")),
+		RunAt:           strings.TrimSpace(r.FormValue("run_at")),
+		StartsAt:        strings.TrimSpace(r.FormValue("starts_at")),
+		RateInterval:    rateInterval,
+		RateUnit:        strings.TrimSpace(r.FormValue("rate_unit")),
+		Timeout:         timeout,
+		AllowConcurrent: allowConcurrentFromForm(r),
+		Target:          target,
 	}, strings.TrimSpace(r.FormValue("original_name")), nil
+}
+
+func allowConcurrentFromForm(r *http.Request) bool {
+	raw := strings.TrimSpace(r.FormValue("allow_concurrent_runs"))
+	return raw == "true" || raw == "on" || raw == "1" || raw == "yes"
 }
 
 func parseJSONArgs(raw string) ([]any, error) {
@@ -624,7 +632,7 @@ func scheduleDetails(schedule ScheduleConfig) template.HTML {
 			parts = append(parts, template.HTML(template.HTMLEscapeString(schedule.Cron)))
 		}
 	}
-	parts = append(parts, template.HTML(template.HTMLEscapeString(concurrencyLabel(schedule.ConcurrencyPolicy))))
+	parts = append(parts, template.HTML(template.HTMLEscapeString(concurrencyLabel(schedule))))
 	var result template.HTML
 	for i, p := range parts {
 		if i > 0 {
@@ -635,17 +643,11 @@ func scheduleDetails(schedule ScheduleConfig) template.HTML {
 	return result + scheduleTimezoneContext(schedule.Timezone)
 }
 
-func concurrencyLabel(policy string) string {
-	switch policy {
-	case "forbid":
-		return "No overlap"
-	case "allow":
+func concurrencyLabel(schedule ScheduleConfig) string {
+	if schedule.AllowsConcurrentRuns() {
 		return "Can overlap"
-	case "":
-		return "No overlap"
-	default:
-		return policy
 	}
+	return "No overlap"
 }
 
 func nextRunLabel(schedule ScheduleConfig) template.HTML {
@@ -1310,10 +1312,10 @@ const uiHTML = `{{define "index"}}<!doctype html>
           <label class="span-2">Description
             <input name="description" value="{{.Schedule.Description}}">
           </label>
-          <label>Concurrency
-            <select name="concurrency_policy">
-              <option value="forbid" {{if eq .Schedule.ConcurrencyPolicy "forbid"}}selected{{end}}>forbid</option>
-              <option value="allow" {{if eq .Schedule.ConcurrencyPolicy "allow"}}selected{{end}}>allow</option>
+          <label>Allow concurrent runs
+            <select name="allow_concurrent_runs">
+              <option value="false" {{if not (allowConcurrent .Schedule)}}selected{{end}}>No</option>
+              <option value="true" {{if allowConcurrent .Schedule}}selected{{end}}>Yes</option>
             </select>
           </label>
         </div>
@@ -1771,7 +1773,6 @@ const uiHTML = `{{define "index"}}<!doctype html>
       <input type="hidden" name="original_name" value="{{.OriginalName}}">
       <input type="hidden" name="target_type" value="faktory">
       <input type="hidden" name="timeout" value="5s">
-      <input type="hidden" name="concurrency_policy" value="allow">
       <input type="hidden" name="name" id="wiz-name" value="{{.Schedule.Name}}">
 
       <div class="wiz-narrative" id="wiz-narrative">
@@ -1839,9 +1840,15 @@ const uiHTML = `{{define "index"}}<!doctype html>
         <h2>Configure the schedule</h2>
         <p class="wiz-hint" id="wiz-detail-hint">Set the timing details.</p>
         <div class="wiz-fields">
-          <label class="full">Timezone
+          <label>Timezone
             <select name="timezone" id="wiz-tz">
               {{range .Timezones}}<option value="{{.}}" {{if eq . $.Schedule.Timezone}}selected{{end}}>{{.}}</option>{{end}}
+            </select>
+          </label>
+          <label>Allow concurrent runs
+            <select name="allow_concurrent_runs" id="wiz-allow-concurrent">
+              <option value="true" {{if allowConcurrent .Schedule}}selected{{end}}>Yes</option>
+              <option value="false" {{if not (allowConcurrent .Schedule)}}selected{{end}}>No</option>
             </select>
           </label>
         </div>
@@ -2064,6 +2071,7 @@ const uiHTML = `{{define "index"}}<!doctype html>
       const desc = document.getElementById("wiz-desc")?.value || "";
       const args = document.getElementById("wiz-args")?.value?.trim() || "[]";
       const tz = document.getElementById("wiz-tz")?.value || "UTC";
+      const allowConcurrent = document.getElementById("wiz-allow-concurrent")?.value === "true";
 
       const rows = [
         ["Instance", inst],
@@ -2073,6 +2081,7 @@ const uiHTML = `{{define "index"}}<!doctype html>
       if (desc) rows.push(["Description", escHtml(desc)]);
       rows.push(["Schedule", scheduleLabel()]);
       rows.push(["Timezone", tz]);
+      rows.push(["Concurrent runs", allowConcurrent ? "Allowed" : "Not allowed"]);
       if (args && args !== "[]") rows.push(["Args", "<code>" + escHtml(args) + "</code>"]);
 
       const tbody = document.getElementById("wiz-review-body");

@@ -14,31 +14,45 @@ import (
 )
 
 type Engine struct {
-	cfg       Config
-	store     Store
-	logger    *slog.Logger
-	cron      *cron.Cron
-	parser    cron.Parser
-	schedules map[string]ScheduleConfig
-	entryIDs  map[string]cron.EntryID
-	mu        sync.RWMutex
-	wg        sync.WaitGroup
+	cfg             Config
+	store           Store
+	logger          *slog.Logger
+	cron            *cron.Cron
+	parser          cron.Parser
+	schedules       map[string]ScheduleConfig
+	entryIDs        map[string]cron.EntryID
+	mu              sync.RWMutex
+	wg              sync.WaitGroup
+	lastRunPrune    time.Time
+	runPruneEvery   time.Duration
+	runPruneEveryN  int
+	runsSincePrune  int
+	runPruneStateMu sync.Mutex
 }
 
 func NewEngine(cfg Config, store Store, logger *slog.Logger) (*Engine, error) {
+	cfg.applyDefaults()
+	if err := validateRunRetention(cfg.RunRetention); err != nil {
+		return nil, err
+	}
+	if err := validateRunLogging(cfg.RunLogging); err != nil {
+		return nil, err
+	}
 	parser, err := cron.TryNewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor | cron.DowOrDom)
 	if err != nil {
 		return nil, err
 	}
 	c := cron.New(cron.WithParser(parser), cron.WithChain(cron.Recover(cron.DefaultLogger)))
 	engine := &Engine{
-		cfg:       cfg,
-		store:     store,
-		logger:    logger,
-		cron:      c,
-		parser:    parser,
-		schedules: map[string]ScheduleConfig{},
-		entryIDs:  map[string]cron.EntryID{},
+		cfg:            cfg,
+		store:          store,
+		logger:         logger,
+		cron:           c,
+		parser:         parser,
+		schedules:      map[string]ScheduleConfig{},
+		entryIDs:       map[string]cron.EntryID{},
+		runPruneEvery:  5 * time.Minute,
+		runPruneEveryN: 100,
 	}
 
 	schedules, err := store.ListSchedules()
@@ -53,6 +67,11 @@ func NewEngine(cfg Config, store Store, logger *slog.Logger) (*Engine, error) {
 		}
 		schedules = cfg.Schedules
 	}
+
+	if err := engine.pruneRuns(); err != nil {
+		return nil, err
+	}
+	engine.markRunPruned(time.Now().UTC())
 
 	for _, schedule := range schedules {
 		if err := engine.registerSchedule(schedule); err != nil {
@@ -337,6 +356,43 @@ func (e *Engine) ClearRuns() error {
 	return e.store.ClearRuns()
 }
 
+func (e *Engine) pruneRuns() error {
+	result, err := e.store.PruneRuns(e.cfg.RunRetention, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if result.Deleted > 0 {
+		e.logger.Info("pruned run log", "deleted", result.Deleted, "kept", result.Kept)
+	}
+	return nil
+}
+
+func (e *Engine) markRunPruned(now time.Time) {
+	e.runPruneStateMu.Lock()
+	defer e.runPruneStateMu.Unlock()
+	e.lastRunPrune = now
+	e.runsSincePrune = 0
+}
+
+func (e *Engine) maybePruneRuns() {
+	now := time.Now().UTC()
+	e.runPruneStateMu.Lock()
+	e.runsSincePrune++
+	shouldPrune := e.lastRunPrune.IsZero() || now.Sub(e.lastRunPrune) >= e.runPruneEvery || e.runsSincePrune >= e.runPruneEveryN
+	if shouldPrune {
+		e.lastRunPrune = now
+		e.runsSincePrune = 0
+	}
+	e.runPruneStateMu.Unlock()
+
+	if !shouldPrune {
+		return
+	}
+	if err := e.pruneRuns(); err != nil {
+		e.logger.Error("prune run log", "error", err)
+	}
+}
+
 func (e *Engine) TriggerManual(ctx context.Context, name string) (Run, error) {
 	e.mu.RLock()
 	schedule, ok := e.schedules[name]
@@ -358,7 +414,7 @@ func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, s
 		return Run{}, ConfigError("schedule not found: " + name)
 	}
 
-	if schedule.ConcurrencyPolicy == "forbid" {
+	if !schedule.AllowsConcurrentRuns() {
 		running, err := e.store.HasRunningRun(schedule.Name)
 		if err != nil {
 			return Run{}, err
@@ -379,6 +435,8 @@ func (e *Engine) Trigger(ctx context.Context, name string, triggeredBy string, s
 			if err := e.store.SaveRun(run); err != nil {
 				return Run{}, err
 			}
+			e.logRunEvent(run)
+			e.maybePruneRuns()
 			return run, nil
 		}
 	}
@@ -449,6 +507,54 @@ func (e *Engine) executeRun(schedule ScheduleConfig, run Run) {
 	if err := e.store.UpdateRun(run); err != nil {
 		e.logger.Error("update run", "run_id", run.ID, "error", err)
 	}
+	e.logRunEvent(run)
+	e.maybePruneRuns()
+}
+
+func (e *Engine) logRunEvent(run Run) {
+	if e.cfg.RunLogging.Stdout == "off" {
+		return
+	}
+	attrs := []any{
+		"run_id", run.ID,
+		"schedule", run.ScheduleName,
+		"target_type", run.TargetType,
+		"triggered_by", run.TriggeredBy,
+		"status", run.Status,
+		"scheduled_at", run.ScheduledAt,
+		"started_at", run.StartedAt,
+	}
+	if run.FinishedAt != nil {
+		attrs = append(attrs, "finished_at", *run.FinishedAt, "duration_ms", run.FinishedAt.Sub(run.StartedAt).Milliseconds())
+	}
+	if run.Error != "" {
+		attrs = append(attrs, "error", run.Error)
+	}
+	attrs = append(attrs, runSummaryOutputAttrs(run)...)
+	if e.cfg.RunLogging.Stdout == "full" && len(run.StructuredOutput) > 0 {
+		attrs = append(attrs, "structured_output", run.StructuredOutput)
+	}
+	e.logger.Info("run event", attrs...)
+}
+
+func runSummaryOutputAttrs(run Run) []any {
+	if len(run.StructuredOutput) == 0 {
+		return nil
+	}
+	attrs := []any{}
+	switch run.TargetType {
+	case "http":
+		if statusCode, ok := run.StructuredOutput["status_code"]; ok {
+			attrs = append(attrs, "http_status_code", statusCode)
+		}
+	case "faktory":
+		for _, field := range []string{"provider", "jid", "queue", "job_type"} {
+			if value, ok := run.StructuredOutput[field]; ok {
+				attrs = append(attrs, field, value)
+			}
+		}
+	}
+	return attrs
 }
 
 func runID(scheduleName, triggeredBy string, scheduledAt time.Time) string {

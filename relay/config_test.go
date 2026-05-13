@@ -35,6 +35,103 @@ schedules:
 	if cfg.Schedules[0].Timeout.Duration != 30*time.Second {
 		t.Fatalf("expected default timeout, got %s", cfg.Schedules[0].Timeout)
 	}
+	if cfg.RunRetention.MaxRecords != 10_000 {
+		t.Fatalf("expected default run retention max records, got %d", cfg.RunRetention.MaxRecords)
+	}
+	if cfg.RunRetention.MaxAgeDays != 30 {
+		t.Fatalf("expected default run retention max age days, got %d", cfg.RunRetention.MaxAgeDays)
+	}
+	if cfg.RunLogging.Stdout != "summary" {
+		t.Fatalf("expected default run logging stdout summary, got %q", cfg.RunLogging.Stdout)
+	}
+}
+
+func TestLoadConfigAcceptsRunRetention(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clock-relay.yaml")
+	raw := []byte(`
+run_retention:
+  max_records: 500
+  max_age_days: 14
+
+schedules: []
+`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunRetention.MaxRecords != 500 {
+		t.Fatalf("expected configured max records, got %d", cfg.RunRetention.MaxRecords)
+	}
+	if cfg.RunRetention.MaxAgeDays != 14 {
+		t.Fatalf("expected configured max age days, got %d", cfg.RunRetention.MaxAgeDays)
+	}
+}
+
+func TestConfigRejectsInvalidRunRetention(t *testing.T) {
+	cfg := Config{
+		RunRetention: RunRetentionConfig{MaxRecords: -1},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid run retention validation error")
+	}
+}
+
+func TestLoadConfigAcceptsRunLogging(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clock-relay.yaml")
+	raw := []byte(`
+run_logging:
+  stdout: full
+
+schedules: []
+`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunLogging.Stdout != "full" {
+		t.Fatalf("expected configured run logging stdout, got %q", cfg.RunLogging.Stdout)
+	}
+}
+
+func TestConfigRejectsInvalidRunLogging(t *testing.T) {
+	cfg := Config{
+		RunLogging: RunLoggingConfig{Stdout: "verbose"},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid run logging validation error")
+	}
+}
+
+func TestConfigAcceptsAllowConcurrentRuns(t *testing.T) {
+	cfg := Config{
+		Schedules: []ScheduleConfig{
+			{
+				Name:            "concurrent",
+				Cron:            "* * * * *",
+				Timezone:        "UTC",
+				Timeout:         Duration{time.Second},
+				AllowConcurrent: true,
+				Target:          TargetConfig{Type: "http", URL: "http://localhost:3000/a"},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	NormalizeSchedule(&cfg.Schedules[0])
+	if !cfg.Schedules[0].AllowsConcurrentRuns() {
+		t.Fatal("expected allow_concurrent_runs to be true")
+	}
 }
 
 func TestBundledConfigsStartWithoutSeedSchedules(t *testing.T) {
@@ -57,8 +154,8 @@ func TestBundledConfigsStartWithoutSeedSchedules(t *testing.T) {
 func TestConfigRejectsDuplicateSchedules(t *testing.T) {
 	cfg := Config{
 		Schedules: []ScheduleConfig{
-			{Name: "same", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, ConcurrencyPolicy: "forbid", Target: TargetConfig{Type: "http", URL: "http://localhost:3000/a"}},
-			{Name: "same", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, ConcurrencyPolicy: "forbid", Target: TargetConfig{Type: "http", URL: "http://localhost:3000/b"}},
+			{Name: "same", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, Target: TargetConfig{Type: "http", URL: "http://localhost:3000/a"}},
+			{Name: "same", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, Target: TargetConfig{Type: "http", URL: "http://localhost:3000/b"}},
 		},
 	}
 	if err := cfg.Validate(); err == nil {
@@ -117,7 +214,7 @@ schedules:
 func TestConfigRejectsUnknownFaktoryInstance(t *testing.T) {
 	cfg := Config{
 		Schedules: []ScheduleConfig{
-			{Name: "bad-ref", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, ConcurrencyPolicy: "forbid", Target: TargetConfig{Type: "faktory", JobType: "test", Instance: "nonexistent"}},
+			{Name: "bad-ref", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, Target: TargetConfig{Type: "faktory", JobType: "test", Instance: "nonexistent"}},
 		},
 	}
 	if err := cfg.Validate(); err == nil {
@@ -170,7 +267,7 @@ schedules:
 func TestConfigRejectsFaktoryWithoutInstance(t *testing.T) {
 	cfg := Config{
 		Schedules: []ScheduleConfig{
-			{Name: "no-instance", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, ConcurrencyPolicy: "forbid", Target: TargetConfig{Type: "faktory", JobType: "test"}},
+			{Name: "no-instance", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, Target: TargetConfig{Type: "faktory", JobType: "test"}},
 		},
 	}
 	if err := cfg.Validate(); err == nil {
@@ -182,24 +279,22 @@ func TestConfigAcceptsExplicitScheduleTypes(t *testing.T) {
 	cfg := Config{
 		Schedules: []ScheduleConfig{
 			{
-				Name:              "maintenance",
-				ScheduleType:      "once",
-				RunAt:             "2026-05-10T09:00",
-				Timezone:          "America/Chicago",
-				Timeout:           Duration{time.Second},
-				ConcurrencyPolicy: "forbid",
-				Target:            TargetConfig{Type: "http", URL: "http://localhost:3000/maintenance"},
+				Name:         "maintenance",
+				ScheduleType: "once",
+				RunAt:        "2026-05-10T09:00",
+				Timezone:     "America/Chicago",
+				Timeout:      Duration{time.Second},
+				Target:       TargetConfig{Type: "http", URL: "http://localhost:3000/maintenance"},
 			},
 			{
-				Name:              "heartbeat",
-				ScheduleType:      "rate",
-				StartsAt:          "2026-05-08T10:30",
-				Timezone:          "UTC",
-				RateInterval:      15,
-				RateUnit:          "minutes",
-				Timeout:           Duration{time.Second},
-				ConcurrencyPolicy: "forbid",
-				Target:            TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat"},
+				Name:         "heartbeat",
+				ScheduleType: "rate",
+				StartsAt:     "2026-05-08T10:30",
+				Timezone:     "UTC",
+				RateInterval: 15,
+				RateUnit:     "minutes",
+				Timeout:      Duration{time.Second},
+				Target:       TargetConfig{Type: "http", URL: "http://localhost:3000/heartbeat"},
 			},
 		},
 	}
@@ -212,15 +307,14 @@ func TestConfigRejectsInvalidRateSchedule(t *testing.T) {
 	cfg := Config{
 		Schedules: []ScheduleConfig{
 			{
-				Name:              "bad-rate",
-				ScheduleType:      "rate",
-				StartsAt:          "2026-05-08T10:30",
-				Timezone:          "UTC",
-				RateInterval:      0,
-				RateUnit:          "minutes",
-				Timeout:           Duration{time.Second},
-				ConcurrencyPolicy: "forbid",
-				Target:            TargetConfig{Type: "http", URL: "http://localhost:3000/bad"},
+				Name:         "bad-rate",
+				ScheduleType: "rate",
+				StartsAt:     "2026-05-08T10:30",
+				Timezone:     "UTC",
+				RateInterval: 0,
+				RateUnit:     "minutes",
+				Timeout:      Duration{time.Second},
+				Target:       TargetConfig{Type: "http", URL: "http://localhost:3000/bad"},
 			},
 		},
 	}
@@ -233,7 +327,7 @@ func TestConfigRejectsFaktoryWithoutJobType(t *testing.T) {
 	cfg := Config{
 		Faktory: []FaktoryInstance{{Name: "default", URL: "tcp://faktory:7419"}},
 		Schedules: []ScheduleConfig{
-			{Name: "missing-job-type", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, ConcurrencyPolicy: "forbid", Target: TargetConfig{Type: "faktory", Instance: "default"}},
+			{Name: "missing-job-type", Cron: "* * * * *", Timezone: "UTC", Timeout: Duration{time.Second}, Target: TargetConfig{Type: "faktory", Instance: "default"}},
 		},
 	}
 	if err := cfg.Validate(); err == nil {

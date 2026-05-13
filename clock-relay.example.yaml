@@ -5,4 +5,11 @@ store:
   type: bbolt
   path: ./data/clock-relay.db
 
+run_retention:
+  max_records: 10000
+  max_age_days: 30
+
+run_logging:
+  stdout: summary
+
 schedules: []

@@ -41,7 +41,7 @@ create_smoke_job() {
     "cron": "0 0 1 1 *",
     "timezone": "UTC",
     "timeout": "10s",
-    "concurrency_policy": "forbid",
+    "allow_concurrent_runs": false,
     "target": {
       "type": "faktory",
       "instance": "default",
