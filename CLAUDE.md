@@ -171,7 +171,7 @@ faktory:
 
 Instance names appear as a dropdown in the UI when creating or editing a Faktory job. The job's `target.instance` field stores the selected instance name.
 
-`password_env` names the environment variable that holds the Faktory password for that instance. If omitted, no password is used (typical for local/dev). For production:
+`password_env` names the environment variable that holds the Faktory password for that instance. If omitted, no password is used (typical for local/dev). Do not embed passwords in Faktory URLs; Clock Relay reads Faktory passwords from `password_env`. For production:
 
 ```yaml
 faktory:
